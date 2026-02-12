@@ -35,7 +35,7 @@ public class SUMOtoTFAformTest extends IntegrationTestBase {
         if (!kb.containsFile("Merge.kif") || !kb.containsFile("Mid-level-ontology.kif"))
             System.out.println("!!!!!!!! error in init(): missing KB files !!!!!!!!!!!!");
         SUMOtoTFAform.setNumericFunctionInfo();
-        SUMOformulaToTPTPformula.lang = "tff";
+        SUMOformulaToTPTPformula.setLang("tff");
         String kbName = KBmanager.getMgr().getPref("sumokbname");
         String filename = KBmanager.getMgr().getPref("kbDir") + File.separator + kbName + ".tff";
         try (PrintWriter pw = new PrintWriter(new FileWriter(filename))) {
@@ -625,7 +625,7 @@ public class SUMOtoTFAformTest extends IntegrationTestBase {
         String s = SUMOtoTFAform.process(f,false);
         //KBcache.debug = true;
         boolean inc = SUMOtoTFAform.inconsistentVarTypes();
-        System.out.println("SUMOtoTFAformTest.testTypeConflict(): varmap: " + SUMOtoTFAform.varmap);
+        System.out.println("SUMOtoTFAformTest.testTypeConflict(): varmap: " + SUMOtoTFAform.getVarmap());
         if (inc)
             System.out.println("testTypeConflict(): Success!");
         else
@@ -673,7 +673,7 @@ public class SUMOtoTFAformTest extends IntegrationTestBase {
         String result = SUMOtoTFAform.process(f,false);
         assertTrue(result.isBlank());
         boolean inc = SUMOtoTFAform.inconsistentVarTypes();
-        System.out.println("SUMOtoTFAformTest.testTypeConflict3(): varmap: " + SUMOtoTFAform.varmap);
+        System.out.println("SUMOtoTFAformTest.testTypeConflict3(): varmap: " + SUMOtoTFAform.getVarmap());
         if (inc)
             System.out.println("testTypeConflict3(): Success!");
         else
@@ -768,7 +768,7 @@ public class SUMOtoTFAformTest extends IntegrationTestBase {
                 "(instance intelligenceQuotient Predicate) (intelligenceQuotient__2Re ?ROW1 ?ROW2)) " +
                 "(instance (ListOrderFn__2InFn (ListFn__2Fn__2ReFn ?ROW1 ?ROW2) ?NUMBER) ?CLASS))";
         Formula f = new Formula(input);
-        SUMOtoTFAform.varmap = SUMOtoTFAform.fp.findAllTypeRestrictions(f, kb);
+        SUMOtoTFAform.setVarmap(SUMOtoTFAform.fp.findAllTypeRestrictions(f, kb));
         System.out.println("testTypeConflict4(): testing missing sorts");
         stfa.sorts = stfa.missingSorts(f);
         System.out.println("testTypeConflict4(): sorts: " + stfa.sorts);

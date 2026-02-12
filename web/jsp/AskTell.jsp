@@ -557,12 +557,12 @@
     String TPTPlang = request.getParameter("TPTPlang");
     if (StringUtil.emptyString(TPTPlang) || TPTPlang.equals("fof")) {
         TPTPlang = "fof";
-        SUMOformulaToTPTPformula.lang = "fof";
-        SUMOKBtoTPTPKB.lang = "fof";
+        SUMOformulaToTPTPformula.setLang("fof");
+        SUMOKBtoTPTPKB.setLang("fof");
     }
     if ("tff".equals(TPTPlang)) {
-        SUMOformulaToTPTPformula.lang = "tff";
-        SUMOKBtoTPTPKB.lang = "tff";
+        SUMOformulaToTPTPformula.setLang("tff");
+        SUMOKBtoTPTPKB.setLang("tff");
     }
 
     boolean syntaxError = false, english = false;
@@ -1519,7 +1519,7 @@
                 tellResultRef.set(tellResult);
 
                 if (mustRegen) {
-                    final String requestedLang = SUMOKBtoTPTPKB.lang; // "fof" or "tff"
+                    final String requestedLang = SUMOKBtoTPTPKB.getLang(); // "fof" or "tff"
                     final String lang = "fof".equals(requestedLang) ? "tptp" : "tff";
                     regenLangRef.set(lang);
 

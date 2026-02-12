@@ -12,9 +12,25 @@ public class SUMOformulaToTPTPformula {
 
     public Formula _f = null;
     public static boolean debug = false;
-    public static boolean hideNumbers = true;
-    public static String lang = "fof"; // or "tff"
-    public static StringBuilder qlist = new StringBuilder();
+
+    // ThreadLocal fields to allow parallel FOF/TFF generation
+    private static final ThreadLocal<Boolean> hideNumbersTL = ThreadLocal.withInitial(() -> true);
+    private static final ThreadLocal<String> langTL = ThreadLocal.withInitial(() -> "fof");
+    private static final ThreadLocal<StringBuilder> qlistTL = ThreadLocal.withInitial(StringBuilder::new);
+
+    public static boolean getHideNumbers() { return hideNumbersTL.get(); }
+    public static void setHideNumbers(boolean h) { hideNumbersTL.set(h); }
+    public static String getLang() { return langTL.get(); }
+    public static void setLang(String l) { langTL.set(l); }
+    public static StringBuilder getQlist() { return qlistTL.get(); }
+    public static void setQlist(StringBuilder q) { qlistTL.set(q); }
+
+    /** Remove ThreadLocal values to prevent leaks in thread pools */
+    public static void clearThreadLocal() {
+        hideNumbersTL.remove();
+        langTL.remove();
+        qlistTL.remove();
+    }
 
     /** ***************************************************************
      */
@@ -26,7 +42,7 @@ public class SUMOformulaToTPTPformula {
      */
     public SUMOformulaToTPTPformula (String l) {
 
-        lang = l;
+        setLang(l);
     }
 
     /** ***************************************************************
@@ -41,7 +57,7 @@ public class SUMOformulaToTPTPformula {
 
         if (debug) System.out.println("SUMOformulaToTPTPformula.translateWord(): input: '" + st + "'");
         if (debug) System.out.println("SUMOformulaToTPTPformula.translateWord(): containsKey: " + SUMOtoTFAform.numericConstantValues.containsKey(st));
-        if (debug) System.out.println("SUMOformulaToTPTPformula.translateWord(): lang: " + lang);
+        if (debug) System.out.println("SUMOformulaToTPTPformula.translateWord(): lang: " + getLang());
         if (debug) System.out.println("translateWord(): " + SUMOtoTFAform.numericConstantValues);
         String result = null;
         try {
@@ -49,7 +65,7 @@ public class SUMOformulaToTPTPformula {
             if (debug) System.out.println("SUMOformulaToTPTPformula.translateWord(): result: " + result);
             if (result.equals("$true" + Formula.TERM_MENTION_SUFFIX) || result.equals("$false" + Formula.TERM_MENTION_SUFFIX))
                 result = "'" + result + "'";
-            if (StringUtil.isNumeric(result) && hideNumbers && !lang.equals("tff")) {
+            if (StringUtil.isNumeric(result) && getHideNumbers() && !getLang().equals("tff")) {
                 if (result.contains("."))
                     result = result.replace('.','_');
                 if (result.contains("-"))
@@ -138,7 +154,7 @@ public class SUMOformulaToTPTPformula {
             return(Formula.TERM_VARIABLE_PREFIX + st.substring(1).replace('-','_'));
         if (debug) System.out.println("INFO in SUMOformulaToTPTPformula.translateWord_1(): here2: ");
         //----Translate special predicates
-        if (lang.equals("tff")) {
+        if (getLang().equals("tff")) {
             if (Formula.isInequality(st) && !hasArguments)
                 return Formula.TERM_SYMBOL_PREFIX + st + Formula.TERM_MENTION_SUFFIX;
             translateIndex = kifPredicates.indexOf(st);
@@ -152,7 +168,7 @@ public class SUMOformulaToTPTPformula {
             return(tptpConstants.get(translateIndex) + (hasArguments ? "" : mentionSuffix));
         if (debug) System.out.println("INFO in SUMOformulaToTPTPformula.translateWord_1(): here4: ");
         //----Translate special functions
-        if (lang.equals("tff")) {
+        if (getLang().equals("tff")) {
             translateIndex = kifFunctions.indexOf(st);
             if (translateIndex != -1)
                 return (tptpFunctions.get(translateIndex) + (hasArguments ? "" : mentionSuffix));
@@ -436,13 +452,13 @@ public class SUMOformulaToTPTPformula {
         }
         f.qlist = qlist;
         // Backward compatibility:
-        SUMOformulaToTPTPformula.qlist = qlist;
+        setQlist(qlist);
         if (debug) System.err.println("SUMOformulaToTPTPformula.generateQList(): qlist: " + qlist);
     }
 
     /** ***************************************************************
      * Parse a single formula into TPTP format.
-     * This version reads from the static SUMOKBtoTPTPKB.lang field.
+     * This version reads from the ThreadLocal SUMOKBtoTPTPKB.getLang() field.
      * For thread-safe operation during background TPTP generation, use
      * tptpParseSUOKIFString(String, boolean, String) instead.
      *
@@ -450,8 +466,8 @@ public class SUMOformulaToTPTPformula {
      * @param query true if the suoString is a query
      */
     public static String tptpParseSUOKIFString(String suoString, boolean query) {
-        // Delegate to parameterized version with current static lang value
-        return tptpParseSUOKIFString(suoString, query, SUMOKBtoTPTPKB.lang);
+        // Delegate to parameterized version with current ThreadLocal lang value
+        return tptpParseSUOKIFString(suoString, query, SUMOKBtoTPTPKB.getLang());
     }
 
     /** ***************************************************************

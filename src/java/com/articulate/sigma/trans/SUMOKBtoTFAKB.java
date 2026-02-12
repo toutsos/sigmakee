@@ -624,7 +624,9 @@ public class SUMOKBtoTFAKB extends SUMOKBtoTPTPKB {
         handleListFn(toExtend);
         String fnSuffix;
         String bareTerm;
-        for (String t : kb.getTerms()) {
+        // Snapshot copy: kb.terms may be modified concurrently by FOF's preProcess()
+        // calling copyNewPredFromVariableArity() on another thread
+        for (String t : new ArrayList<>(kb.getTerms())) {
             bareTerm = SUMOtoTFAform.getBareTerm(t);
             pw.println("% SUMOKBtoTFAKB.writeSorts(): " + t);
             if (debug) System.out.println("SUMOKBtoTFAKB.writeSorts(): t: " + t);
@@ -706,12 +708,12 @@ public class SUMOKBtoTFAKB extends SUMOKBtoTPTPKB {
             skbtfakb.initOnce();
             System.out.println("SUMOKBtoTFAKB.main(): completed init");
 
-            SUMOformulaToTPTPformula.lang = "tff"; // this setting has to be *after* initialization, otherwise init
+            SUMOformulaToTPTPformula.setLang("tff"); // this setting has to be *after* initialization, otherwise init
             // tries to write a TPTP file and then sees that tff is set and tries to write tff, but then sorts etc
             // haven't been set
-            SUMOKBtoTPTPKB.lang = "tff";
+            SUMOKBtoTPTPKB.setLang("tff");
             String kbName = KBmanager.getMgr().getPref("sumokbname");
-            String filename = KBmanager.getMgr().getPref("kbDir") + File.separator + kbName + "." + SUMOKBtoTPTPKB.lang;
+            String filename = KBmanager.getMgr().getPref("kbDir") + File.separator + kbName + "." + SUMOKBtoTPTPKB.getLang();
             System.out.println("SUMOKBtoTFAKB.main(): " + skbtfakb.kb.kbCache.getSignature("ListOrderFn"));
             String fileWritten = null;
             try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(Paths.get(filename)))) {

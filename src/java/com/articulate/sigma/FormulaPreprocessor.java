@@ -923,7 +923,7 @@ public class FormulaPreprocessor {
                     instantiations = PredVarInst.instantiatePredVars(f,kb);
                     if (predVars.size() > 1) {
                         if (debug) System.out.println("FormulaPreprocessor.replacePredVarsAndRowVars(): returning doubles: " + instantiations);
-                        if (debug) System.out.println(SUMOtoTFAform.filterMessage);
+                        if (debug) System.out.println(SUMOtoTFAform.getFilterMessage());
                     }
                     if (debug) System.out.println("FormulaPreprocessor.replacePredVarsAndRowVars(): pred vars repl: " + f + "\n" + instantiations);
                     form.errors.addAll(f.getErrors());

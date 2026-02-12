@@ -38,6 +38,7 @@ import com.google.common.collect.Sets;
 
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
@@ -58,11 +59,12 @@ public class KBcache implements Serializable {
 
     public KB kb = null;
 
-    // all the relations in the kb
-    public Set<String> relations = new HashSet<>();
+    // all the relations in the kb (ConcurrentHashMap-backed for thread-safe
+    // concurrent access during parallel FOF/TFF generation)
+    public Set<String> relations = ConcurrentHashMap.newKeySet();
 
-    // all the functions in the kb
-    public Set<String> functions = new HashSet<>();
+    // all the functions in the kb (ConcurrentHashMap-backed for thread safety)
+    public Set<String> functions = ConcurrentHashMap.newKeySet();
 
     // all relations that are not functions
     public Set<String> predicates = new HashSet<>();
@@ -90,7 +92,7 @@ public class KBcache implements Serializable {
      * subAttribute and subrelation.  May not do what you think
      * since the key is the child (instance)
      */
-    public Map<String, Set<String>> instanceOf = new HashMap<>();
+    public Map<String, Set<String>> instanceOf = new ConcurrentHashMap<>();
 
     // all the instances of a class key, including through subrelation
     // and subAttribute
@@ -119,10 +121,10 @@ public class KBcache implements Serializable {
      * types (when there's a domainSubclass etc) are designated by a
      * '+' appended to the class name.
      **/
-    public Map<String, List<String>> signatures = new HashMap<>();
+    public Map<String, List<String>> signatures = new ConcurrentHashMap<>();
 
     // The number of arguments to each relation.  Variable arity is -1
-    public Map<String, Integer> valences = new HashMap<>();
+    public Map<String, Integer> valences = new ConcurrentHashMap<>();
 
     /** Disjoint relationships which were explicitly defined in "partition", "disjoint",
      * and "disjointDecomposition" expressions
@@ -154,19 +156,22 @@ public class KBcache implements Serializable {
      */
     public KBcache(KB kbin) {
 
-        relations = new HashSet<>(kbin.getCountTerms()/9,LOAD_FACTOR);
-        functions = new HashSet<>(kbin.getCountTerms()/46,LOAD_FACTOR);
+        // Use concurrent collections for fields modified during parallel FOF/TFF generation
+        // (relations, functions, instanceOf, signatures, valences).
+        // ConcurrentHashMap initial capacity is set similarly to the old HashMap hints.
+        relations = ConcurrentHashMap.newKeySet(kbin.getCountTerms()/9);
+        functions = ConcurrentHashMap.newKeySet(kbin.getCountTerms()/46);
         predicates = new HashSet<>(kbin.getCountTerms()/11,LOAD_FACTOR);
         transRels = new HashSet<>(60,LOAD_FACTOR);
         // instRels = new HashSet<String>();
         instTransRels = new HashSet<>(50,LOAD_FACTOR);
         parents = new HashMap<>(60,LOAD_FACTOR);
-        instanceOf = new HashMap<>(kbin.getCountTerms()/2,LOAD_FACTOR);
+        instanceOf = new ConcurrentHashMap<>(kbin.getCountTerms()/2);
         instances = new HashMap<>(45,LOAD_FACTOR);
         insts = new HashSet<>(kbin.getCountTerms()/2,LOAD_FACTOR);
         children = new HashMap<>(200,LOAD_FACTOR);
-        signatures = new HashMap<>(kbin.getCountTerms()/8,LOAD_FACTOR);
-        valences = new HashMap<>(kbin.getCountTerms()/8,LOAD_FACTOR);
+        signatures = new ConcurrentHashMap<>(kbin.getCountTerms()/8);
+        valences = new ConcurrentHashMap<>(kbin.getCountTerms()/8);
         explicitDisjoint = new HashMap<>(kbin.getCountTerms()/27,LOAD_FACTOR);
         disjointRelations = new HashSet<>(kbin.getCountTerms()/163,LOAD_FACTOR);
         disjoint = new HashSet<>(kbin.getCountTerms() * 2103,LOAD_FACTOR);
@@ -188,7 +193,8 @@ public class KBcache implements Serializable {
 
         this.kb = kbIn;
         if (kbCacheIn.relations != null) {
-            this.relations = Sets.newHashSet(kbCacheIn.relations);
+            this.relations = ConcurrentHashMap.newKeySet(kbCacheIn.relations.size());
+            this.relations.addAll(kbCacheIn.relations);
         }
         if (kbCacheIn.transRels != null) {
             this.transRels = Sets.newHashSet(kbCacheIn.transRels);
@@ -257,7 +263,7 @@ public class KBcache implements Serializable {
             }
         }
         if (kbCacheIn.valences != null) {
-            this.valences = Maps.newHashMap(kbCacheIn.valences);
+            this.valences = new ConcurrentHashMap<>(kbCacheIn.valences);
         }
         if (kbCacheIn.explicitDisjoint != null) {
             String key;
@@ -472,9 +478,11 @@ public class KBcache implements Serializable {
     }
 
     /** ***************************************************************
-     * Add a new instance from an existing one plus a suffix, updating the caches
+     * Add a new instance from an existing one plus a suffix, updating the caches.
+     * Synchronized to allow safe concurrent access from parallel FOF/TFF
+     * generation threads (both call preProcess() which may trigger this).
      */
-    public void extendInstance(String term, String suffix) {
+    public synchronized void extendInstance(String term, String suffix) {
 
         String sep = "__";
         //if (suffix.matches("\\d__.*"))  // variable arity has appended single underscore before arity
@@ -487,7 +495,8 @@ public class KBcache implements Serializable {
         kb.terms.add(newTerm);
         kb.capterms.put(newTerm.toUpperCase(),newTerm);
         Set<String> iset = instanceOf.get(term);
-        instanceOf.put(newTerm,iset);
+        if (iset != null)
+            instanceOf.put(newTerm,iset);
         //if (newTerm.endsWith(Formula.FN_SUFF))
         //    System.out.println("KBcache.extendInstance(): instance parents of: " + newTerm + " are: " + iset);
         //System.out.println("extendInstance(): new term: " + newTerm + " parents: " + iset);
@@ -532,7 +541,9 @@ public class KBcache implements Serializable {
         List<String> newsig = SUMOtoTFAform.relationExtractSigFromName(newTerm);
         signatures.put(newTerm,newsig);
         // The number of arguments to each relation.  Variable arity is -1
-        valences.put(newTerm,valences.get(term));
+        Integer val = valences.get(term);
+        if (val != null)
+            valences.put(newTerm, val);
         if (term.endsWith(Formula.FN_SUFF))
             functions.add(newTerm);
     }
@@ -1918,9 +1929,11 @@ public class KBcache implements Serializable {
     /** ***************************************************************
      * Copy all relevant information from a VariableArityRelation to a new
      * predicate that is a particular fixed arity. Fill the signature from
-     * final argument type in the predicate
+     * final argument type in the predicate.
+     * Synchronized to allow safe concurrent access from parallel FOF/TFF
+     * generation threads (both call preProcess() which may trigger this).
      */
-    public void copyNewPredFromVariableArity(String pred, String oldPred, int arity) {
+    public synchronized void copyNewPredFromVariableArity(String pred, String oldPred, int arity) {
 
         if (debug) System.out.println("copyNewPredFromVariableArity(): pred,oldPred: " + pred + ", " + oldPred);
         List<String> oldSig = signatures.get(oldPred);

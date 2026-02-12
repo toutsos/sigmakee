@@ -25,7 +25,12 @@ public class SUMOKBtoTPTPKB {
 
     public static boolean debug = false;
 
-    public static String lang = "fof"; // or thf
+    // ThreadLocal to allow parallel FOF/TFF generation
+    private static final ThreadLocal<String> langTL = ThreadLocal.withInitial(() -> "fof");
+    public static String getLang() { return langTL.get(); }
+    public static void setLang(String l) { langTL.set(l); }
+    /** Remove ThreadLocal values to prevent leaks in thread pools */
+    public static void clearThreadLocal() { langTL.remove(); }
 
     public static boolean CWA = false;  // implement the closed world assumption
 
@@ -96,7 +101,7 @@ public class SUMOKBtoTPTPKB {
 
         String sanitizedKBName = getSanitizedKBname();
         return KBmanager.getMgr().getPref("kbDir") + File.separator +
-                sanitizedKBName + "." + langToExtension(lang);
+                sanitizedKBName + "." + langToExtension(getLang());
     }
 
     /** *************************************************************
@@ -163,7 +168,7 @@ public class SUMOKBtoTPTPKB {
             if (result != null) {
                 for (Formula f : result) {
                     s = f.getFormula().replace(value,key);
-                    pr.println(lang + "(kb_" + sanitizedKBName + "_" + axiomIndex.getAndIncrement() +
+                    pr.println(getLang() + "(kb_" + sanitizedKBName + "_" + axiomIndex.getAndIncrement() +
                             ",axiom,(" + SUMOformulaToTPTPformula.tptpParseSUOKIFString(s, false) + ")).");
                 }
             }
@@ -172,24 +177,24 @@ public class SUMOKBtoTPTPKB {
 
     /** ***************************************************************
      * Print the sorts of any numeric constants encountered during processing.
-     * They are stored in SUMOtoTFAform.numericConstantTypes
+     * They are stored in SUMOtoTFAform.getNumericConstantTypes()
      */
     public void printTFFNumericConstants(PrintWriter pw) {
 
-        int size = SUMOtoTFAform.numericConstantTypes.keySet().size();
+        int size = SUMOtoTFAform.getNumericConstantTypes().keySet().size();
         if (size == SUMOtoTFAform.numericConstantCount)
             return;
         String type;
-        for (String t : SUMOtoTFAform.numericConstantTypes.keySet()) {
+        for (String t : SUMOtoTFAform.getNumericConstantTypes().keySet()) {
             if (SUMOtoTFAform.numericConstantValues.keySet().contains(t))
                 continue;
-            type = SUMOtoTFAform.numericConstantTypes.get(t);
+            type = SUMOtoTFAform.getNumericConstantTypes().get(t);
             if (debug) System.out.println("SUMOKBtoTPTPKB.printTFFNumericConstants(): term, type: " + t + ", " + type);
             pw.println("tff(" + SUMOformulaToTPTPformula.translateWord(t, StreamTokenizer.TT_WORD,false)  +
                     "_sig,type," + SUMOformulaToTPTPformula.translateWord(t, StreamTokenizer.TT_WORD,false)  +
                     ":" + SUMOKBtoTFAKB.translateSort(kb,type) + ").");
         }
-//        for (String t : SUMOtoTFAform.numericConstantTypes.keySet()) {
+//        for (String t : SUMOtoTFAform.getNumericConstantTypes().keySet()) {
 //            if (SUMOtoTFAform.numericConstantValues.keySet().contains(t))
 //                continue;
 //        }
@@ -197,18 +202,18 @@ public class SUMOKBtoTPTPKB {
 
     /** ***************************************************************
      * Print the sorts of any numeric constants encountered during processing.
-     * They are stored in SUMOtoTFAform.numericConstantTypes
+     * They are stored in SUMOtoTFAform.getNumericConstantTypes()
      */
     public synchronized void printTFFNumericConstants(List<String> fileContents) {
 
-        int size = SUMOtoTFAform.numericConstantTypes.keySet().size();
+        int size = SUMOtoTFAform.getNumericConstantTypes().keySet().size();
         if (size == SUMOtoTFAform.numericConstantCount)
             return;
         String type;
-        for (String t : SUMOtoTFAform.numericConstantTypes.keySet()) {
+        for (String t : SUMOtoTFAform.getNumericConstantTypes().keySet()) {
             if (SUMOtoTFAform.numericConstantValues.keySet().contains(t))
                 continue;
-            type = SUMOtoTFAform.numericConstantTypes.get(t);
+            type = SUMOtoTFAform.getNumericConstantTypes().get(t);
             if (debug) System.out.println("SUMOKBtoTPTPKB.printTFFNumericConstants(): term, type: " + t + ", " + type);
             fileContents.add("tff(" + SUMOformulaToTPTPformula.translateWord(t, StreamTokenizer.TT_WORD,false)  +
                     "_sig,type," + SUMOformulaToTPTPformula.translateWord(t, StreamTokenizer.TT_WORD,false)  +
@@ -370,9 +375,9 @@ public class SUMOKBtoTPTPKB {
             if (isNonReasoningForATP(f.getFormula())) continue;
 
             // Format-specific cache clearing to prevent FOF/TFF overwrites
-            if (lang.equals("fof")) {
+            if (getLang().equals("fof")) {
                 f.theFofFormulas.clear();
-            } else if (lang.equals("tff")) {
+            } else if (getLang().equals("tff")) {
                 f.theTffFormulas.clear();
             }
             f.theTptpFormulas.clear(); // Legacy compatibility
@@ -388,7 +393,7 @@ public class SUMOKBtoTPTPKB {
             }
             if (f.isHigherOrder(kb)) {
                 pw.println("% is higher order");
-                if (lang.equals("thf")) {  // TODO create a flag for adding modals (or not)
+                if (getLang().equals("thf")) {  // TODO create a flag for adding modals (or not)
                     f = Modals.processModals(f,kb);
                 }
                 if (removeHOL)
@@ -412,7 +417,7 @@ public class SUMOKBtoTPTPKB {
                 for (Formula f2 : processed)
                     withRelnRenames.add(f2.renameVariableArityRelations(kb,relationMap));
                 for (Formula f3 : withRelnRenames) {
-                    switch (lang) {
+                    switch (getLang()) {
                         case "fof":
                             if (debug) System.out.println("SUMOKBtoTPTPKB.writeFile() : % tptp input: " + f3.format("", "", Formula.SPACE));
                             result = SUMOformulaToTPTPformula.tptpParseSUOKIFString(f3.getFormula(), false);
@@ -437,12 +442,12 @@ public class SUMOKBtoTPTPKB {
                             if (!StringUtil.emptyString(result)) {
                                 f.theTffFormulas.add(result);
                                 f.theTptpFormulas.add(result); // Legacy compatibility
-                            } else if (!StringUtil.emptyString(SUMOtoTFAform.filterMessage)) {
-                                pw.println("% " + SUMOtoTFAform.filterMessage);
+                            } else if (!StringUtil.emptyString(SUMOtoTFAform.getFilterMessage())) {
+                                pw.println("% " + SUMOtoTFAform.getFilterMessage());
                             }
                             break;
                         default:
-                            pw.println("% unhandled language option " + lang);
+                            pw.println("% unhandled language option " + getLang());
                             break;
                     }
                 }
@@ -456,12 +461,12 @@ public class SUMOKBtoTPTPKB {
                         !alreadyWrittenTPTPs.contains(sort)) {
                     name = "kb_" + getSanitizedKBname() + "_" + axiomIndex.getAndIncrement();
                     axiomKey.put(name,f);
-                    pw.println(lang + Formula.LP + name + ",axiom,(" + sort + ")).");
+                    pw.println(getLang() + Formula.LP + name + ",axiom,(" + sort + ")).");
                     alreadyWrittenTPTPs.add(sort);
                 }
             }
             // Use format-specific field for file writing
-            Set<String> formulasToWrite = lang.equals("fof") ? f.theFofFormulas : f.theTffFormulas;
+            Set<String> formulasToWrite = getLang().equals("fof") ? f.theFofFormulas : f.theTffFormulas;
             for (String theTPTPFormula : formulasToWrite) {
                 if (!StringUtil.emptyString(theTPTPFormula) &&
                         !alreadyWrittenTPTPs.contains(theTPTPFormula) &&
@@ -469,7 +474,7 @@ public class SUMOKBtoTPTPKB {
                     if (debug) System.out.println("SUMOKBtoTPTPKB.writeFile() : writing " + theTPTPFormula);
                     name = "kb_" + getSanitizedKBname() + "_" + axiomIndex.getAndIncrement();
                     axiomKey.put(name,f);
-                    pw.println(lang + Formula.LP + name + ",axiom,(" + theTPTPFormula + ")).");
+                    pw.println(getLang() + Formula.LP + name + ",axiom,(" + theTPTPFormula + ")).");
                     if (debug) System.out.println("SUMOKBtoTPTPKB.writeFile() : finished writing " + theTPTPFormula + " with name " + name);
                     alreadyWrittenTPTPs.add(theTPTPFormula);
                 }
@@ -490,7 +495,7 @@ public class SUMOKBtoTPTPKB {
             String type = "conjecture";
             if (isQuestion) type = "question";
             for (String theTPTPFormula : conjecture.theTptpFormulas)
-                pw.println(lang + "(prove_from_" + getSanitizedKBname() + "," + type + ",(" + theTPTPFormula + ")).");
+                pw.println(getLang() + "(prove_from_" + getSanitizedKBname() + "," + type + ",(" + theTPTPFormula + ")).");
         }
         pw.flush();
 
@@ -522,7 +527,7 @@ public class SUMOKBtoTPTPKB {
     private String _tWriteFile(String fileName, Formula conjecture,
                                boolean isQuestion, PrintWriter pw) {
 
-        final String localLang = this.lang; // snapshot once
+        final String localLang = getLang(); // snapshot once from ThreadLocal
         final ExportProfile prof = PROFILE_TFF ? new ExportProfile() : null;
 
         Map<String, String> relationMap = new TreeMap<>(); // variable-arity relations keyed by new name
@@ -665,8 +670,8 @@ public class SUMOKBtoTPTPKB {
                                 if (!StringUtil.emptyString(result)) {
                                     f.theTffFormulas.add(result);
                                     f.theTptpFormulas.add(result); // Legacy compatibility
-                                } else if (!StringUtil.emptyString(SUMOtoTFAform.filterMessage))
-                                    fileContents.add("% " + SUMOtoTFAform.filterMessage);
+                                } else if (!StringUtil.emptyString(SUMOtoTFAform.getFilterMessage()))
+                                    fileContents.add("% " + SUMOtoTFAform.getFilterMessage());
                                 break;
 
                             default:
@@ -948,7 +953,7 @@ public class SUMOKBtoTPTPKB {
         SUMOKBtoTPTPKB skbtptpkb = new SUMOKBtoTPTPKB();
         String kbName = KBmanager.getMgr().getPref("sumokbname");
         skbtptpkb.kb = KBmanager.getMgr().getKB(kbName);
-        String filename = KBmanager.getMgr().getPref("kbDir") + File.separator + kbName + "." + SUMOKBtoTPTPKB.lang;
+        String filename = KBmanager.getMgr().getPref("kbDir") + File.separator + kbName + "." + SUMOKBtoTPTPKB.getLang();
         String fileWritten = null;
         try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(Paths.get(filename)))) {
             fileWritten = skbtptpkb.writeFile(filename, null, false, pw);

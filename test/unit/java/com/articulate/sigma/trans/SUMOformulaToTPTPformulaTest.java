@@ -20,8 +20,8 @@ public class SUMOformulaToTPTPformulaTest {
      */
     @Before
     public void init() {
-        SUMOformulaToTPTPformula.hideNumbers = true;
-        SUMOformulaToTPTPformula.lang = "fof";
+        SUMOformulaToTPTPformula.setHideNumbers(true);
+        SUMOformulaToTPTPformula.setLang("fof");
     }
 
     /** ***************************************************************
@@ -31,8 +31,8 @@ public class SUMOformulaToTPTPformulaTest {
         System.out.println("=============================");
         System.out.println("SUMOformulaToTPTPformulaTest: " + label);
         System.out.println();
-        SUMOformulaToTPTPformula.lang = "fof";
-        SUMOKBtoTPTPKB.lang = "fof";
+        SUMOformulaToTPTPformula.setLang("fof");
+        SUMOKBtoTPTPKB.setLang("fof");
         String actualRes = SUMOformulaToTPTPformula.tptpParseSUOKIFString(kif, false);
         if (!StringUtil.emptyString(actualRes))
             actualRes = actualRes.replaceAll("  "," ");
@@ -206,7 +206,7 @@ public class SUMOformulaToTPTPformulaTest {
 
         Formula f = new Formula("(<=> (instance ?NUMBER NegativeRealNumber) (and (lessThan ?NUMBER 0) (instance ?NUMBER RealNumber)))");
         SUMOformulaToTPTPformula.generateQList(f);
-        assertEquals(SUMOformulaToTPTPformula.qlist.toString(),"V__NUMBER");
+        assertEquals(SUMOformulaToTPTPformula.getQlist().toString(),"V__NUMBER");
 
         String kifstring = "(=> (and (instance ?GUN Gun) (effectiveRange ?GUN ?LM) " +
                 "(distance ?GUN ?O ?LM1) (instance ?O Organism) (not (exists (?O2) " +
@@ -215,6 +215,6 @@ public class SUMOformulaToTPTPformulaTest {
                 "(patient ?KILLING ?O))) instrument ?GUN))";
         f = new Formula(kifstring);
         SUMOformulaToTPTPformula.generateQList(f);
-        assertEquals(SUMOformulaToTPTPformula.qlist.toString(), "V__LM,V__O,V__KILLING,V__GUN,V__LM1");
+        assertEquals(SUMOformulaToTPTPformula.getQlist().toString(), "V__LM,V__O,V__KILLING,V__GUN,V__LM1");
     }
 }

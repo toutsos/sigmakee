@@ -230,18 +230,18 @@ public class PredVarInst {
         Set<String> predVars = gatherPredVars(kb,input);
         if (predVars.size() > 1) {
             if (rejectDoubles) {
-                SUMOtoTFAform.filterMessage = "reject axioms with more than one predicate variable";
+                SUMOtoTFAform.setFilterMessage("reject axioms with more than one predicate variable");
                 if (debug) System.out.println("instantiatePredVars(): reject axioms with more than one predicate variable: \n" + input);
                 return null;
             }
             else {
                 if (!doublesHandled) {
-                    SUMOtoTFAform.filterMessage = "axiom with more than one predicate variable";
+                    SUMOtoTFAform.setFilterMessage("axiom with more than one predicate variable");
                     if (debug) System.out.println("instantiatePredVars(): should handle: \n" + input);
                     return handleDoubles(kb);
                 }
                 else {
-                    SUMOtoTFAform.filterMessage = "axiom with more than one predicate variable";
+                    SUMOtoTFAform.setFilterMessage("axiom with more than one predicate variable");
                     if (debug) System.out.println("instantiatePredVars(): should have already handled: \n" + input);
                     return null;
                 }
