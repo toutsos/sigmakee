@@ -15,6 +15,7 @@ import com.articulate.sigma.*;
 import com.articulate.sigma.utils.StringUtil;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -158,12 +159,12 @@ public class TPTPGenerationManager {
 
             // Atomic replace (or fallback)
             try {
-                java.nio.file.Files.move(tmp, target,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                java.nio.file.Files.move(tmp, target,
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                Files.move(tmp, target,
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException e) {
+                Files.move(tmp, target,
+                        StandardCopyOption.REPLACE_EXISTING);
             }
 
             long elapsed = System.currentTimeMillis() - startTime;
@@ -173,7 +174,7 @@ public class TPTPGenerationManager {
         } catch (Exception e) {
             System.err.println("TPTPGenerationManager: Error generating FOF: " + e.getMessage());
             e.printStackTrace();
-            // best effort cleanup
+            // best effort cleanupT
             try { java.nio.file.Files.deleteIfExists(tmp); } catch (Exception ignore) {}
         } finally {
             // Clean up ThreadLocal state to prevent leaks in thread pools
@@ -563,7 +564,7 @@ public class TPTPGenerationManager {
             SUMOformulaToTPTPformula.setLang("tff");
 
             try (PrintWriter pw = new PrintWriter(
-                    Files.newBufferedWriter(outputPath, java.nio.charset.StandardCharsets.UTF_8))) {
+                    Files.newBufferedWriter(outputPath, StandardCharsets.UTF_8))) {
 
                 if (!kb.formulaMap.isEmpty()) {
                     SUMOKBtoTFAKB stff = new SUMOKBtoTFAKB();

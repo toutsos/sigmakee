@@ -60,7 +60,7 @@ public class KBcache implements Serializable {
     public KB kb = null;
 
     // all the relations in the kb (ConcurrentHashMap-backed for thread-safe
-    // concurrent access during parallel FOF/TFF generation)
+    // concurrent access during parallel TFF generation)
     public Set<String> relations = ConcurrentHashMap.newKeySet();
 
     // all the functions in the kb (ConcurrentHashMap-backed for thread safety)
@@ -156,9 +156,7 @@ public class KBcache implements Serializable {
      */
     public KBcache(KB kbin) {
 
-        // Use concurrent collections for fields modified during parallel FOF/TFF generation
-        // (relations, functions, instanceOf, signatures, valences).
-        // ConcurrentHashMap initial capacity is set similarly to the old HashMap hints.
+        // Use concurrent collections for fields read/written during parallel TFF generation.
         relations = ConcurrentHashMap.newKeySet(kbin.getCountTerms()/9);
         functions = ConcurrentHashMap.newKeySet(kbin.getCountTerms()/46);
         predicates = new HashSet<>(kbin.getCountTerms()/11,LOAD_FACTOR);
@@ -1930,28 +1928,40 @@ public class KBcache implements Serializable {
      * Copy all relevant information from a VariableArityRelation to a new
      * predicate that is a particular fixed arity. Fill the signature from
      * final argument type in the predicate.
-     * Synchronized to allow safe concurrent access from parallel FOF/TFF
-     * generation threads (both call preProcess() which may trigger this).
+     * Uses double-checked locking: the first containsKey() is a thread-safe read
+     * on ConcurrentHashMap (fast path, no lock).  Only the first registration for
+     * each (pred,arity) pair acquires the monitor; all subsequent calls return
+     * immediately.
      */
-    public synchronized void copyNewPredFromVariableArity(String pred, String oldPred, int arity) {
+    public void copyNewPredFromVariableArity(String pred, String oldPred, int arity) {
 
-        if (debug) System.out.println("copyNewPredFromVariableArity(): pred,oldPred: " + pred + ", " + oldPred);
-        List<String> oldSig = signatures.get(oldPred);
-        List<String> newSig = new ArrayList<>();
-        if (oldSig != null)
-            newSig = new ArrayList(oldSig);
-        if (signatures.keySet().contains(oldPred))
-            signatures.put(pred,newSig);
-        String lastType = oldSig.get(oldSig.size()-1);
-        for (int i = oldSig.size(); i <= arity; i++) {
-            newSig.add(lastType);
+        // Fast path: pred already registered — skip expensive lock acquisition.
+        // signatures is a ConcurrentHashMap so this read is thread-safe.
+        if (signatures.containsKey(pred)) return;
+
+        synchronized (this) {
+            // Double-check under lock: another thread may have registered pred
+            // between the fast-path check above and this point.
+            if (signatures.containsKey(pred)) return;
+
+            if (debug) System.out.println("copyNewPredFromVariableArity(): pred,oldPred: " + pred + ", " + oldPred);
+            List<String> oldSig = signatures.get(oldPred);
+            List<String> newSig = new ArrayList<>();
+            if (oldSig != null)
+                newSig = new ArrayList(oldSig);
+            if (signatures.keySet().contains(oldPred))
+                signatures.put(pred,newSig);
+            String lastType = oldSig.get(oldSig.size()-1);
+            for (int i = oldSig.size(); i <= arity; i++) {
+                newSig.add(lastType);
+            }
+            if (instanceOf.keySet().contains(oldPred))
+                instanceOf.put(pred, instanceOf.get(oldPred));
+            valences.put(pred,arity);
+            if (kb.isFunction(oldPred))
+                kb.kbCache.functions.add(pred);
+            kb.terms.add(pred);
         }
-        if (instanceOf.keySet().contains(oldPred))
-            instanceOf.put(pred, instanceOf.get(oldPred));
-        valences.put(pred,arity);
-        if (kb.isFunction(oldPred))
-            kb.kbCache.functions.add(pred);
-        kb.terms.add(pred);
     }
 
     /** ***************************************************************
