@@ -1197,7 +1197,7 @@ public class LanguageFormatter {
             if (isNegMode) {
                 sb.append(k.NOT).append(Formula.SPACE);
             }
-//            sb.append(k.FORALL).append(Formula.SPACE);
+            sb.append(k.FORALL).append(Formula.SPACE);
 
             String vars = args.get(0);
             if (vars.contains(Formula.SPACE)) {
@@ -1362,7 +1362,7 @@ public class LanguageFormatter {
             if (Formula.isVariable(arg))
                 para = arg;
             else
-                para = paraphraseStatement(arg, isNegMode, isQuestionMode, 1);
+                para = paraphraseStatement(arg, false, isQuestionMode, 1);
             if (debug) System.out.println("para: " + para);
             //outputMap.add(new AVPair(pred + "-" + argPointer, para));
             //System.out.println("para: " + para);
@@ -1682,8 +1682,7 @@ public class LanguageFormatter {
      */
     private static String incrementalVarReplace(String form, String varString, String varType,
                                                 String varPretty, String language,
-                                                boolean isClass, Map<String, Integer> typeMap,
-                                                Map<String, String> varLabelMap) {
+                                                boolean isClass, Map<String, Integer> typeMap) {
 
         String argNumStr = "";
         if (debug) System.out.println("LanguageFormatter.incrementalVarReplace(): form " + form);
@@ -1742,11 +1741,8 @@ public class LanguageFormatter {
             if (result.contains(varString) && count < 20) {
                 if (isClass) {
                     article = NLGUtils.getArticle("kind", count, occurrenceCounter, language);
-                    String lbl = getOrCreateVarLabel(varString, varLabelMap);
-//                    replacement = (article + Formula.SPACE + NLGUtils.getKeyword("kind of", language)
-//                            + Formula.SPACE + varPretty);
                     replacement = (article + Formula.SPACE + NLGUtils.getKeyword("kind of", language)
-                            + Formula.SPACE + varPretty + Formula.SPACE + lbl);
+                            + Formula.SPACE + varPretty);
                     if (isArabic)
                         replacement = (NLGUtils.getKeyword("kind of", language) + Formula.SPACE + varPretty);
 
@@ -1757,9 +1753,7 @@ public class LanguageFormatter {
                 }
                 else {
                     article = NLGUtils.getArticle(varPretty, count, occurrenceCounter, language);
-                    String lbl = getOrCreateVarLabel(varString, varLabelMap);
-//                    replacement = (article + Formula.SPACE + varPretty);
-                    replacement = (article + Formula.SPACE + varPretty + Formula.SPACE + lbl);
+                    replacement = (article + Formula.SPACE + varPretty);
                     if (isArabic) {
                         defArt = NLGUtils.getKeyword("the", language);
                         if (article.startsWith(defArt) && !varPretty.startsWith(defArt)) {
@@ -1784,17 +1778,6 @@ public class LanguageFormatter {
         return result;
     }
 
-    private static String getOrCreateVarLabel(String varString, Map<String,String> varLabelMap) {
-        String lbl = varLabelMap.get(varString);
-        if (lbl != null) return lbl;
-
-        int idx = varLabelMap.size();
-        String[] base = {"X","Y","Z","W","V","U","T","S","R","Q","P","O","N","M","L","K","J","I","H","G","F","E","D","C","B","A"};
-        lbl = (idx < base.length) ? base[idx] : ("X" + (idx + 1));
-        varLabelMap.put(varString, lbl);
-        return lbl;
-    }
-
     /** **************************************************************
      * Replace variables in a formula with paraphrases expressing their
      * type.
@@ -1804,9 +1787,6 @@ public class LanguageFormatter {
 
         String result = form;
         Map<String,Integer> typeMap = new HashMap<>();
-
-        // NEW: stable variable labels per formula
-        Map<String,String> varLabelMap = new LinkedHashMap<>();
 
         List<String> varList = NLGUtils.collectOrderedVariables(form);
         Iterator<String> it = varList.iterator();
@@ -1824,19 +1804,19 @@ public class LanguageFormatter {
                 if (subclassArray != null && !subclassArray.isEmpty()) {
                     varType = (String) subclassArray.toArray()[0];
                     varPretty = kb.getTermFormatMap(language).get(varType);
-                    result = incrementalVarReplace(result, varString, varType, varPretty, language, true, typeMap, varLabelMap);
+                    result = incrementalVarReplace(result, varString, varType, varPretty, language, true, typeMap);
                 }
                 else {
                     if (instanceArray != null && !instanceArray.isEmpty()) {
                         varType = (String) instanceArray.toArray()[0];
                         varPretty = kb.getTermFormatMap(language).get(varType);
-                        result = incrementalVarReplace(result, varString, varType, varPretty, language, false, typeMap, varLabelMap);
+                        result = incrementalVarReplace(result, varString, varType, varPretty, language, false, typeMap);
                     }
                     else {
                         varPretty = kb.getTermFormatMap(language).get("Entity");
                         if (StringUtil.emptyString(varPretty))
                             varPretty = "entity";
-                        result = incrementalVarReplace(result, varString, "Entity", varPretty, language, false, typeMap, varLabelMap);
+                        result = incrementalVarReplace(result, varString, "Entity", varPretty, language, false, typeMap);
                     }
                 }
             }

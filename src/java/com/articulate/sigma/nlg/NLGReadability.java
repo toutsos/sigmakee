@@ -277,50 +277,11 @@ public final class NLGReadability {
         if (placeholderToOriginal.isEmpty())
             return s;
 
-        Map<String,String> symbolAware = buildSymbolAwarePlaceholderMap(placeholderToOriginal);
-        if (symbolAware.isEmpty())
-            return s;
-
         String out = s;
-        for (Map.Entry<String,String> e : symbolAware.entrySet()) {
+        for (Map.Entry<String,String> e : placeholderToOriginal.entrySet()) {
             out = out.replace(e.getKey(), e.getValue());
         }
         return out;
-    }
-
-
-    private static Map<String,String> buildSymbolAwarePlaceholderMap(
-            Map<String,String> placeholderToOriginal) {
-
-        Map<String,String> out = new LinkedHashMap<>();
-
-        for (Map.Entry<String,String> e : placeholderToOriginal.entrySet()) {
-            String placeholder = e.getKey();
-            String original = e.getValue();
-
-            String replacement = extractSymbolIfPresent(original);
-            out.put(placeholder, replacement);
-        }
-        return out;
-    }
-
-
-    private static String extractSymbolIfPresent(String original) {
-
-        Matcher m = ANNOT_TERM.matcher(original);
-        if (!m.matches())
-            return original;   // not an annotated term
-
-        String type = m.group(1);    // e.g. Organism
-        String phrase = m.group(2);  // text inside quotes
-
-        Matcher sym = TRAILING_LABEL.matcher(phrase);
-        if (!sym.matches())
-            return original;   // no symbol → keep original
-
-        String symbol = sym.group(1); // X / Y / Z / X3 ...
-
-        return "&%" + type + "$\"" + symbol + "\"";
     }
 
 
@@ -376,18 +337,7 @@ public final class NLGReadability {
         if (factored != null)
             return factored;
 
-        StringBuilder out = new StringBuilder(s.length());
-        for (int i = 0; i < items.size(); i++) {
-            if (i > 0) {
-                if (i == items.size() - 1) {
-                    out.append(", ").append(connectorKw).append(" ");
-                } else {
-                    out.append(", ");
-                }
-            }
-            out.append(items.get(i));
-        }
-        return out.toString();
+        return joinWithConnector(items, connectorKw);
     }
 
 
@@ -1232,10 +1182,8 @@ public final class NLGReadability {
             Map<String,String> ctx2 = new LinkedHashMap<>(symToTypeCtx);
             for (String vph : q.vars) {
                 String orig = placeholderToOriginal.get(vph);
-                // extract type + symbol from orig (helpers)
-                String type = extractType(orig);   // "Organism"
-                String sym  = extractLabel(orig);      // "X"
-                if (type != null && sym != null) ctx2.put(sym, type);
+                String type = extractType(orig);
+                if (type != null) ctx2.put(type, type);
             }
             List<Node> kids = new ArrayList<>();
             for (Node c : q.children) kids.add(rewriteNode(c, andKw, orKw, mode, language,placeholderToOriginal,ctx2));
@@ -1249,10 +1197,8 @@ public final class NLGReadability {
             Map<String,String> ctx2 = new LinkedHashMap<>(symToTypeCtx);
             for (String vph : q.vars) {
                 String orig = placeholderToOriginal.get(vph);
-                // extract type + symbol from orig (helpers)
-                String type = extractType(orig);   // "Organism"
-                String sym  = extractLabel(orig);      // "X"
-                if (type != null && sym != null) ctx2.put(sym, type);
+                String type = extractType(orig);
+                if (type != null) ctx2.put(type, type);
             }
             List<Node> kids = new ArrayList<>();
             for (Node c : q.children) kids.add(rewriteNode(c, andKw, orKw, mode, language, placeholderToOriginal, ctx2));
@@ -1343,17 +1289,16 @@ public final class NLGReadability {
         // Predicate must be instance
         if (!isInstancePredicate(predOrig)) return false;
 
-        // Extract symbol X from subject
-        String sym = extractLabel(subjOrig);
-        if (sym == null) return false;
+        String subjType = extractType(subjOrig);
+        if (subjType == null) return false;
 
         // Extract asserted type from object
         String assertedType = extractType(objOrig);
         if (assertedType == null) return false;
 
-        // Redundant iff quantifier already typed X as assertedType
-        String declaredType = symToTypeCtx.get(sym);
-        return declaredType != null && declaredType.equals(assertedType);
+        // Redundant iff the asserted type matches the subject's type AND a variable of that type
+        // is declared by the enclosing quantifier
+        return assertedType.equals(subjType) && symToTypeCtx.containsKey(assertedType);
     }
 
 
@@ -1864,10 +1809,7 @@ public final class NLGReadability {
 
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < items.size(); i++) {
-            if (i > 0) {
-                if (i == items.size() - 1) sb.append(", ").append(connectorKw).append(" ");
-                else sb.append(", ");
-            }
+            if (i > 0) sb.append(" ").append(connectorKw).append(" ");
             sb.append(items.get(i));
         }
         return sb.toString();

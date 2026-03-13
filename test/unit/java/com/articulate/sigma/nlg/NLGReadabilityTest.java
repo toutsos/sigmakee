@@ -491,30 +491,28 @@ public class NLGReadabilityTest extends UnitTestBase {
     }
 
     @Test
-    public void readabilityForAllHeader_factorsMultipleTypesAndVars_asTypedSymbols() {
+    public void readabilityForAllHeader_multipleTypesAndVars_usesVerboseFallback() {
 
         // 3 Organism vars + 1 Human var; body is a simple atom to avoid other rewrites.
+        // Without variable symbols, renderFactoredForAllHeaderMultiType returns null
+        // and the fallback "for all <varlist>" path is used.
         String t =
                 "[FORALL][VARS]" +
-                        "&%Organism$\"an organism X\"1, " +
-                        "&%Organism$\"another organism Y\"1, " +
-                        "&%Organism$\"a third organism Z\"2, and " +
-                        "&%Human$\"a human W\"1 [/VARS]" +
+                        "&%Organism$\"an organism\"1, " +
+                        "&%Organism$\"another organism\"1, " +
+                        "&%Organism$\"a third organism\"2, and " +
+                        "&%Human$\"a human\"1 [/VARS]" +
                         "A[/FORALL]";
 
         String out = NLGReadability.improveTemplate(t, LanguageFormatter.RenderMode.TEXT, "EnglishLanguage");
 
-        // Expect: factored multi-type header where BOTH the type and each symbol are annotated
-        String expected =
-                "For all " +
-                        "&%Organism$\"Organisms\" " +
-                        "&%Organism$\"X\", &%Organism$\"Y\", and &%Organism$\"Z\" " +
-                        "and " +
-                        "&%Human$\"Human\" " +
-                        "&%Human$\"W\"" +
-                        ": A";
-
-        assertEquals(expected, out);
+        // Expect: verbose fallback listing each var description
+        assertTrue(out.contains("for all"));
+        assertTrue(out.contains("an organism"));
+        assertTrue(out.contains("another organism"));
+        assertTrue(out.contains("a third organism"));
+        assertTrue(out.contains("a human"));
+        assertTrue(out.endsWith(": A"));
     }
 
 
@@ -522,11 +520,11 @@ public class NLGReadabilityTest extends UnitTestBase {
     public void readabilityDropRedundantInstanceOf_collapsesOuterIf_whenOnlyTypeConstraints() {
 
         String t =
-                " [FORALL][VARS]&%Organism$\"an organism X\"1, &%Organism$\"another organism Y\"1, and &%Organism$\"a third organism Z\"2[/VARS] " +
-                        "[IF_A][AND][SEG]&%Organism$\"X\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and " +
-                        "[SEG]&%Organism$\"Y\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and " +
-                        "[SEG]&%Organism$\"Z\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG][/AND][/IF_A] " +
-                        "[IF_C]&%Organism$\"Z\" is a &%parent$\"parent\" of &%Organism$\"Y\"[/IF_C][/FORALL]";
+                " [FORALL][VARS]&%Organism$\"an organism\"1, &%Organism$\"another organism\"1, and &%Organism$\"a third organism\"2[/VARS] " +
+                        "[IF_A][AND][SEG]&%Organism$\"the organism\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and " +
+                        "[SEG]&%Organism$\"the organism\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and " +
+                        "[SEG]&%Organism$\"the organism\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG][/AND][/IF_A] " +
+                        "[IF_C]&%Organism$\"the organism\" is a &%parent$\"parent\" of &%Organism$\"the organism\"[/IF_C][/FORALL]";
 
         String out = NLGReadability.improveTemplate(t, LanguageFormatter.RenderMode.HTML, "EnglishLanguage");
 
@@ -539,23 +537,21 @@ public class NLGReadabilityTest extends UnitTestBase {
 
         // Consequent should remain
         assertTrue(out.contains("&%parent$\"parent\""));
-        assertTrue(out.contains("&%Organism$\"Z\""));
-        assertTrue(out.contains("&%Organism$\"Y\""));
     }
 
     @Test
     public void dropRedundantInstanceOf_keepsNonTypeConjuncts_inAntecedent() {
 
         String t =
-                " [FORALL][VARS]&%Organism$\"an organism X\"1 and &%Organism$\"another organism Y\"1[/VARS] " +
-                        "[IF_A][AND][SEG]&%Organism$\"X\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and " +
-                        "[SEG]&%Organism$\"X\" is a &%sibling$\"sibling\" of &%Organism$\"Y\"[/SEG][/AND][/IF_A] " +
-                        "[IF_C]&%Organism$\"Y\" is a &%parent$\"parent\" of &%Organism$\"X\"[/IF_C][/FORALL]";
+                " [FORALL][VARS]&%Organism$\"an organism\"1 and &%Organism$\"another organism\"1[/VARS] " +
+                        "[IF_A][AND][SEG]&%Organism$\"the organism\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and " +
+                        "[SEG]&%Organism$\"the organism\" is a &%sibling$\"sibling\" of &%Organism$\"the organism\"[/SEG][/AND][/IF_A] " +
+                        "[IF_C]&%Organism$\"the organism\" is a &%parent$\"parent\" of &%Organism$\"the organism\"[/IF_C][/FORALL]";
 
         String out = NLGReadability.improveTemplate(t, LanguageFormatter.RenderMode.HTML, "EnglishLanguage");
 
         // Type constraint dropped
-        assertFalse(out.contains("&%Organism$\"X\" is an &%instance$\"instance\""));
+        assertFalse(out.contains("&%instance$\"instance\""));
 
         // Non-type fact kept
         assertTrue(out.contains("&%sibling$\"sibling\""));
@@ -565,29 +561,32 @@ public class NLGReadabilityTest extends UnitTestBase {
     public void dropRedundantInstanceOf_doesNotDrop_whenTypeMismatch() {
 
         String t =
-                " [FORALL][VARS]&%Organism$\"an organism X\"1[/VARS] " +
-                        "[IF_A]&%Organism$\"X\" is an &%instance$\"instance\" of &%Human$\"human\"[/IF_A] " +
-                        "[IF_C]&%Human$\"W\" is a &%parent$\"parent\" of &%HumanT0$\"T0\"[/IF_C][/FORALL]";
+                " [FORALL][VARS]&%Organism$\"an organism\"1[/VARS] " +
+                        "[IF_A]&%Organism$\"the organism\" is an &%instance$\"instance\" of &%Human$\"human\"[/IF_A] " +
+                        "[IF_C]&%Human$\"a human\" is a &%parent$\"parent\" of &%HumanT0$\"a human T0\"[/IF_C][/FORALL]";
 
         String out = NLGReadability.improveTemplate(t, LanguageFormatter.RenderMode.HTML, "EnglishLanguage");
 
-        // Must keep mismatching type assertion
+        // Must keep mismatching type assertion (Organism var declared but asserted as Human)
         assertTrue(out.contains("&%instance$\"instance\""));
         assertTrue(out.contains("&%Human$\"human\""));
     }
 
     @Test
-    public void dropRedundantInstanceOf_doesNotDrop_whenSymbolNotQuantified() {
+    public void dropRedundantInstanceOf_doesNotDrop_whenTypeNotQuantified() {
 
+        // Human type is not declared in the quantifier (only Organism is), so the
+        // "a human is an instance of human" assertion must not be dropped.
         String t =
-                " [FORALL][VARS]&%Organism$\"an organism X\"1[/VARS] " +
-                        "[IF_A]&%Organism$\"W\" is an &%instance$\"instance\" of &%Organism$\"organism\"[/IF_A] " +
+                " [FORALL][VARS]&%Organism$\"an organism\"1[/VARS] " +
+                        "[IF_A]&%Human$\"a human\" is an &%instance$\"instance\" of &%Human$\"human\"[/IF_A] " +
                         "[IF_C]A[/IF_C][/FORALL]";
 
         String out = NLGReadability.improveTemplate(t, LanguageFormatter.RenderMode.HTML, "EnglishLanguage");
 
-        // W not declared, so keep it
-        assertTrue(out.contains("&%Organism$\"W\" is an &%instance$\"instance\""));
+        // Human not declared in quantifier context, so keep the assertion
+        assertTrue(out.contains("&%instance$\"instance\""));
+        assertTrue(out.contains("&%Human$\"human\""));
     }
 
     @Test
@@ -661,7 +660,7 @@ public class NLGReadabilityTest extends UnitTestBase {
     @Test
     public void test() {
 
-        String t = "[FORALL][VARS]&%Organism$\"an organism X\"1, &%Organism$\"another organism Y\"1 and &%Organism$\"a third organism Z\"2[/VARS] [IF_A][AND][SEG]&%Organism$\"the organism X\"1 is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and [SEG]&%Organism$\"the other organism Y\"1 is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and [SEG]&%Organism$\"the third organism Z\"2 is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG][/AND][/IF_A][IF_C][IF_A][AND][SEG]&%Organism$\"the organism X\"1 is a &%sibling$\"sibling\" of &%Organism$\"the other organism Y\"1[/SEG] and [SEG]&%Organism$\"the third organism Z\"2 is a &%parent$\"parent\" of &%Organism$\"the organism X\"1[/SEG][/AND][/IF_A][IF_C]&%Organism$\"the third organism Z\"2 is a &%parent$\"parent\" of &%Organism$\"the other organism Y\"1[/IF_C][/IF_C][/FORALL]";
+        String t = "[FORALL][VARS]&%Organism$\"an organism\"1, &%Organism$\"another organism\"1 and &%Organism$\"a third organism\"2[/VARS] [IF_A][AND][SEG]&%Organism$\"the organism\"1 is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and [SEG]&%Organism$\"the other organism\"1 is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG] and [SEG]&%Organism$\"the third organism\"2 is an &%instance$\"instance\" of &%Organism$\"organism\"[/SEG][/AND][/IF_A][IF_C][IF_A][AND][SEG]&%Organism$\"the organism\"1 is a &%sibling$\"sibling\" of &%Organism$\"the other organism\"1[/SEG] and [SEG]&%Organism$\"the third organism\"2 is a &%parent$\"parent\" of &%Organism$\"the organism\"1[/SEG][/AND][/IF_A][IF_C]&%Organism$\"the third organism\"2 is a &%parent$\"parent\" of &%Organism$\"the other organism\"1[/IF_C][/IF_C][/FORALL]";
 
         String out = NLGReadability.improveTemplate(t, LanguageFormatter.RenderMode.TEXT, "EnglishLanguage");
 

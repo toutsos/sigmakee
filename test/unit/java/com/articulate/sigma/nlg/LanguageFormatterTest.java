@@ -71,7 +71,7 @@ public class LanguageFormatterTest extends UnitTestBase {
         instanceMap.put("?H", Sets.newHashSet("AutonomousAgent"));
         HashMap<String, Set<String>> classMap = Maps.newHashMap();
 
-        String expected = "there exist &%Process$\"a  process X\" and &%AutonomousAgent$\"an agent Y\" such that &%Process$\"the process X\" is an &%instance$\"instance\" of &%Driving$\"driving\" and &%AutonomousAgent$\"the agent Y\" is an &%instance$\"instance\" of &%Human$\"human\" and &%AutonomousAgent$\"the agent Y\" is an &%agent$\"agent\" of &%Process$\"the process X\"";
+        String expected = "there exist &%Process$\"a  process\" and &%AutonomousAgent$\"an agent\" such that &%Process$\"the process\" is an &%instance$\"instance\" of &%Driving$\"driving\" and &%AutonomousAgent$\"the agent\" is an &%instance$\"instance\" of &%Human$\"human\" and &%AutonomousAgent$\"the agent\" is an &%agent$\"agent\" of &%Process$\"the process\"";
 
         LanguageFormatter.setKB(SigmaTestBase.kb);
         String actual = LanguageFormatter.variableReplace(form, instanceMap, classMap, SigmaTestBase.kb, "EnglishLanguage");
@@ -173,12 +173,12 @@ public class LanguageFormatterTest extends UnitTestBase {
                 "?H", Sets.newHashSet("Human"), "?D", Sets.newHashSet("Driving")));
         Map<String, Set<String>> classMap = Maps.newHashMap();
 
-        String expected = "<ul><li>if &%Human$\"a  human X\" drives,</li><li>then &%Human$\"the human X\" sees</li></ul>";
+        String expected = "<ul><li>if &%Human$\"a  human\" drives,</li><li>then &%Human$\"the human\" sees</li></ul>";
         String variableReplaceOutput = LanguageFormatter.variableReplace(form, instanceMap, classMap, SigmaTestBase.kb, "EnglishLanguage");
         assertEquals(expected, variableReplaceOutput);
 
         // Verify resolveFormatSpecifiers( ).
-        expected = "<ul><li>if <a href=\"&term=Human\">a  human X</a> drives,</li><li>then <a href=\"&term=Human\">the human X</a> sees</li></ul>";
+        expected = "<ul><li>if <a href=\"&term=Human\">a  human</a> drives,</li><li>then <a href=\"&term=Human\">the human</a> sees</li></ul>";
         String resolveFormatSpecifiersOutput = NLGUtils.resolveFormatSpecifiers(variableReplaceOutput, "");
         assertEquals(expected, resolveFormatSpecifiersOutput);
     }
@@ -195,12 +195,12 @@ public class LanguageFormatterTest extends UnitTestBase {
                 "?H", Sets.newHashSet("Human"), "?D", Sets.newHashSet("Driving")));
         Map<String, Set<String>> classMap = Maps.newHashMap();
 
-        String expected = "if &%Human$\"a  human X\" drives, then &%Human$\"the human X\" sees";
+        String expected = "if &%Human$\"a  human\" drives, then &%Human$\"the human\" sees";
         String variableReplaceOutput = LanguageFormatter.variableReplace(form, instanceMap, classMap, SigmaTestBase.kb, "EnglishLanguage");
         assertEquals(expected, variableReplaceOutput);
 
         // Verify resolveFormatSpecifiers( ).
-        expected = "if a human X drives, then the human X sees";
+        expected = "if a human drives, then the human sees";
         String resolveFormatSpecifiersOutput = NLGUtils.resolveFormatSpecifiers(variableReplaceOutput, "");
         assertEquals(expected, StringUtil.filterHtml(resolveFormatSpecifiersOutput));
     }
@@ -718,7 +718,7 @@ public class LanguageFormatterTest extends UnitTestBase {
                 LanguageFormatter.RenderMode.TEXT
         );
 
-        assertEquals("[FORALL][VARS]?X[/VARS] A and B[/FORALL]", out);
+        assertEquals("[FORALL]for all [VARS]?X[/VARS] A and B[/FORALL]", out);
     }
 
 
