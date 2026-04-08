@@ -47,6 +47,8 @@ public class TPTPGenerationTest {
         // Suppress background SUMO.tptp/SUMO.tff generation: this test drives
         // generation directly via generateFOFToPath/generateTFFToPath.
         TPTPGenerationManager.setSkipBackgroundGeneration(true);
+        // Suppress kbmanager.ser write-back: tests don't need persistence side-effects.
+        KBmanager.skipSerialization = true;
         KBmanager.getMgr().initializeOnce();
         kb = KBmanager.getMgr().getKB(KBmanager.getMgr().getPref("sumokbname"));
         long elapsed = System.currentTimeMillis() - startTime;
@@ -117,6 +119,70 @@ public class TPTPGenerationTest {
 
         String content = new String(Files.readAllBytes(outputPath));
         assertTrue("TFF file should contain tff() declarations", content.contains("tff("));
+    }
+
+    @Test
+    public void testGenerateH2FOF() throws Exception {
+
+        Path outputPath = tempFolder.newFile("SUMO_h2.tptp").toPath();
+
+        System.out.println("\n===== TPTPGenerationTest: Generating FOF (H2/Expr new path) =====");
+        long startTime = System.currentTimeMillis();
+        TPTPGenerationManager.generateH2FOFToPath(kb, outputPath);
+        long elapsed = System.currentTimeMillis() - startTime;
+
+        printFileReport("FOF H2/Expr", outputPath, elapsed);
+
+        // Save for cross-run comparison against the old-path output.
+        // Run 1 → /tmp/SUMO_h2fof_run1.tptp, Run 2 → /tmp/SUMO_h2fof_run2.tptp
+        // Compare old vs new: diff /tmp/SUMO_fof_run1.tptp /tmp/SUMO_h2fof_run1.tptp
+        Path run1 = Paths.get("/tmp/SUMO_h2fof_run1.tptp");
+        Path run2 = Paths.get("/tmp/SUMO_h2fof_run2.tptp");
+        Path saveTo = Files.exists(run1) ? run2 : run1;
+        Files.copy(outputPath, saveTo, StandardCopyOption.REPLACE_EXISTING);
+        System.out.println("===== FOF H2/Expr copy saved to: " + saveTo + " =====");
+        if (Files.exists(run1) && Files.exists(run2))
+            System.out.println("===== Both runs saved. Compare with: diff " + run1 + " " + run2 + " =====");
+
+        File file = outputPath.toFile();
+        assertTrue("H2 FOF file should exist", file.exists());
+        assertTrue("H2 FOF file should be non-empty (was " + file.length() + " bytes)", file.length() > 0);
+
+        String content = new String(Files.readAllBytes(outputPath));
+        assertTrue("H2 FOF file should contain fof() declarations", content.contains("fof("));
+        assertFalse("H2 FOF file should not contain tff() declarations", content.contains("tff("));
+    }
+
+    @Test
+    public void testGenerateH2TFF() throws Exception {
+
+        Path outputPath = tempFolder.newFile("SUMO_h2.tff").toPath();
+
+        System.out.println("\n===== TPTPGenerationTest: Generating TFF (H2/Expr new path) =====");
+        long startTime = System.currentTimeMillis();
+        TPTPGenerationManager.generateH2TFFToPath(kb, outputPath);
+        long elapsed = System.currentTimeMillis() - startTime;
+
+        printFileReport("TFF H2/Expr", outputPath, elapsed);
+
+        // Save for cross-run comparison against the old-path output.
+        // Run 1 → /tmp/SUMO_h2tff_run1.tff, Run 2 → /tmp/SUMO_h2tff_run2.tff
+        // Compare old vs new: diff /tmp/SUMO_tff_run1.tff /tmp/SUMO_h2tff_run1.tff
+        Path run1 = Paths.get("/tmp/SUMO_h2tff_run1.tff");
+        Path run2 = Paths.get("/tmp/SUMO_h2tff_run2.tff");
+        Path saveTo = Files.exists(run1) ? run2 : run1;
+        Files.copy(outputPath, saveTo, StandardCopyOption.REPLACE_EXISTING);
+        System.out.println("===== TFF H2/Expr copy saved to: " + saveTo + " =====");
+        if (Files.exists(run1) && Files.exists(run2))
+            System.out.println("===== Both runs saved. Compare with: diff " + run1 + " " + run2 + " =====");
+
+        File file = outputPath.toFile();
+        assertTrue("H2 TFF file should exist", file.exists());
+        assertTrue("H2 TFF file should be non-empty (was " + file.length() + " bytes)", file.length() > 0);
+
+        String content = new String(Files.readAllBytes(outputPath));
+        assertTrue("H2 TFF file should contain tff() declarations", content.contains("tff("));
+        assertFalse("H2 TFF file should not contain fof() declarations", content.contains("fof("));
     }
 
     @Test

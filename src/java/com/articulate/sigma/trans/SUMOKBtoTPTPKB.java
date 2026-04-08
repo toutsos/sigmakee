@@ -89,7 +89,7 @@ public class SUMOKBtoTPTPKB {
      * Writes to the thread-local override when one is active (session-specific generation),
      * otherwise writes to the global {@link #axiomKey}.
      */
-    private void putAxiom(String name, Formula f) {
+    public static void putAxiom(String name, Formula f) {
         Map<String,Formula> target = localAxiomKeyOverride.get();
         if (target != null) target.put(name, f);
         else axiomKey.put(name, f);
@@ -846,7 +846,7 @@ public class SUMOKBtoTPTPKB {
      *   <li>For regular predicates: any compound non-function arg → HOL immediately.</li>
      * </ul>
      */
-    private static boolean isHigherOrderExpr(Expr expr, KB kb) {
+    static boolean isHigherOrderExpr(Expr expr, KB kb) {
         if (!(expr instanceof Expr.SExpr se)) return false;
         String head = se.headName();
         if (head == null) return false; // var-list node inside a quantifier
@@ -905,7 +905,7 @@ public class SUMOKBtoTPTPKB {
         return f.isHigherOrder(kb);
     }
 
-    private static boolean isNonReasoningForATP(String kif) {
+    public static boolean isNonReasoningForATP(String kif) {
         // keep it cheap: no parsing, just prefix checks / contains checks
         return kif.startsWith("(termFormat ")
                 || kif.startsWith("(format ")

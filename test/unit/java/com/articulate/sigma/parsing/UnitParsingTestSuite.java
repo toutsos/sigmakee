@@ -18,7 +18,10 @@ import org.junit.runners.Suite;
     KIFASTTest.class,
     PredVarInstExprTest.class,
     ClausifierExprTest.class,
-    ExprToTPTPTest.class
+    ExprToTPTPTest.class,
+    ExprToTPTPQlistTest.class,
+    ExprToTFFTest.class,
+    FingerprintTest.class
 })
 public class UnitParsingTestSuite  extends UnitTestBase {
 

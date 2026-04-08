@@ -1808,6 +1808,9 @@ public class KB implements Serializable {
                         for (Formula parsedF : parsedFormulas) { // 4. Write the formula to the user assertions file.
                             parsedF.endFilePosition = writeUserAssertion(parsedF.getFormula(), filename);
                             parsedF.sourceFile = filename;
+                            // Tag with session so generation methods can filter cross-session UA formulas.
+                            if (sessionId != null && !sessionId.isEmpty())
+                                parsedF.uaSessionId = sessionId;
                         }
                         result = "The formula has been added for browsing";
                         // 5. Write the formula to the kb.name_UserAssertions.tptp/tff
@@ -1843,31 +1846,33 @@ public class KB implements Serializable {
                                     result += " but not for local inference";
                                     break;
                             }
-                        // Incremental TPTP pipeline for schema-level tells in a session.
-                        // Runs after merge() and UA-file write; keeps the session TPTP up to date.
-                        // Two cases from requiresBaseRegenForFormulas():
-                        //   (A) Schema predicates (TPTP_BASE_REGEN_PREDICATES) → incremental update
-                        //   (B) Ground assertions on transitive predicates → no targeted method, full regen
+                        // Session TPTP update: apply KBcache updates per-formula, then do a
+                        // single full session regeneration (H2/Expr fast path) instead of
+                        // incremental patching.  Simple assertions are already handled above
+                        // by assertFormula() → session UA TPTP file; only schema-level or
+                        // transitive-relation predicates need a full SUMO.tptp rebuild.
                         if (sessionId != null && !sessionId.isEmpty()) {
                             String tptpLang = SUMOKBtoTPTPKB.getLang();
                             tptpLang = "fof".equals(tptpLang) ? "tptp" : tptpLang;
+                            boolean needsRegen = false;
                             for (Formula parsedF : parsedFormulas) {
                                 String fPred = parsedF.car();
                                 if (fPred == null) continue;
                                 if (TPTP_BASE_REGEN_PREDICATES.contains(fPred)) {
-                                    // Case (A): targeted incremental update
-                                    SessionTPTPManager.applyIncrementalUpdate(this, sessionId, parsedF, tptpLang);
-                                }
-                                else if (parsedF.isGround()
+                                    // Update session KBcache so regen uses the correct type info
+                                    SessionTPTPManager.applySessionCacheUpdateOnly(this, sessionId, parsedF);
+                                    needsRegen = true;
+                                } else if (parsedF.isGround()
                                            && kbCache != null
                                            && kbCache.isTransitivePredicate(fPred)) {
-                                    // Case (B): ground fact on a transitive relation — affects transitive
-                                    // closure but no targeted KBcache method exists; fall back to full regen.
-                                    if (SessionTPTPManager.isBatchMode(sessionId)) {
-                                        SessionTPTPManager.setForceGeneration(sessionId);
-                                    } else {
-                                        SessionTPTPManager.generateSessionTPTP(sessionId, this, tptpLang);
-                                    }
+                                    needsRegen = true;
+                                }
+                            }
+                            if (needsRegen) {
+                                if (SessionTPTPManager.isBatchMode(sessionId)) {
+                                    SessionTPTPManager.setForceGeneration(sessionId);
+                                } else {
+                                    SessionTPTPManager.generateSessionTPTP(sessionId, this, tptpLang);
                                 }
                             }
                         }

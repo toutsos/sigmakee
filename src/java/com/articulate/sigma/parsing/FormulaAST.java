@@ -1,9 +1,13 @@
 package com.articulate.sigma.parsing;
 
 import com.articulate.sigma.Formula;
+import com.google.common.hash.HashCode;
+import com.google.common.hash.Hasher;
+import com.google.common.hash.Hashing;
 
 import org.antlr.v4.runtime.ParserRuleContext;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -44,6 +48,16 @@ public class FormulaAST extends Formula {
 
     /** Structured AST representation of this formula (Phase 1+). Null until SuokifVisitor populates it. */
     public Expr expr = null;
+
+    /**
+     * M8 — Alpha-equivalence fingerprint.
+     *
+     * <p>Computed by {@link #computeFingerprint(Expr)} after the Expr tree is
+     * built.  Two formulas with the same fingerprint are alpha-equivalent (same
+     * logical structure, differing only in variable names).  A value of
+     * {@code 0L} means the fingerprint has not been computed yet.</p>
+     */
+    public long fingerprint = 0L;
 
     public boolean isDoc = false; // a documentation statement that is excluded from theorem proving
     public boolean isRule = false;
@@ -425,5 +439,69 @@ public class FormulaAST extends Formula {
             System.out.println();
         }
         System.out.println();
+    }
+
+    // -----------------------------------------------------------------------
+    // M8 — Alpha-equivalence fingerprinting
+    // -----------------------------------------------------------------------
+
+    /**
+     * Computes a 64-bit MurmurHash3 fingerprint for {@code expr} that is
+     * invariant under alpha-renaming of variables.
+     *
+     * <h3>Algorithm</h3>
+     * <p>A single DFS walk over the {@link Expr} tree normalises variable names
+     * to positional tokens ({@code Var_0}, {@code Var_1}, …) in the order of
+     * first encounter, then hashes the resulting token sequence with
+     * {@link Hashing#murmur3_128()}.  Two formulas that differ only in their
+     * variable names produce the same hash.</p>
+     *
+     * <h3>Example</h3>
+     * <pre>
+     *   (forall (?X) (instance ?X Dog))
+     *   (forall (?Y) (instance ?Y Dog))
+     *   → both normalise to: [forall, Var_0, instance, Var_0, Dog]
+     *   → same fingerprint
+     * </pre>
+     *
+     * @param expr the Expr tree to fingerprint; returns {@code 1L} when null
+     * @return 64-bit fingerprint (lower half of the 128-bit Murmur hash)
+     */
+    @SuppressWarnings("UnstableApiUsage")
+    public static long computeFingerprint(Expr expr) {
+        if (expr == null) return 1L;
+        Hasher hasher = Hashing.murmur3_128().newHasher();
+        Map<String, Integer> varOrder = new HashMap<>();
+        hashExpr(expr, hasher, varOrder);
+        HashCode hc = hasher.hash();
+        return hc.asLong();
+    }
+
+    /**
+     * Recursive DFS helper for {@link #computeFingerprint}.
+     * Feeds a token sequence derived from {@code expr} into {@code hasher},
+     * substituting variable names with their positional index.
+     */
+    private static void hashExpr(Expr expr, Hasher hasher, Map<String, Integer> varOrder) {
+        switch (expr) {
+            case Expr.Var v -> {
+                // Normalise: replace variable name with its encounter order
+                int idx = varOrder.computeIfAbsent(v.name(), k -> varOrder.size());
+                hasher.putString("Var_" + idx, StandardCharsets.UTF_8);
+            }
+            case Expr.RowVar rv -> {
+                int idx = varOrder.computeIfAbsent(rv.name(), k -> varOrder.size());
+                hasher.putString("RowVar_" + idx, StandardCharsets.UTF_8);
+            }
+            case Expr.NumLiteral n -> hasher.putString("Num:" + n.value(), StandardCharsets.UTF_8);
+            case Expr.StrLiteral s -> hasher.putString("Str:" + s.value(), StandardCharsets.UTF_8);
+            case Expr.Atom a       -> hasher.putString(a.name(), StandardCharsets.UTF_8);
+            case Expr.SExpr se -> {
+                hasher.putByte((byte) '(');
+                if (se.head() != null) hashExpr(se.head(), hasher, varOrder);
+                for (Expr arg : se.args()) hashExpr(arg, hasher, varOrder);
+                hasher.putByte((byte) ')');
+            }
+        }
     }
 }

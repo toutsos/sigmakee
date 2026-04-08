@@ -20,6 +20,7 @@ package com.articulate.sigma;
 import com.articulate.sigma.CCheckManager.CCheckStatus;
 import com.articulate.sigma.VerbNet.VerbNet;
 import com.articulate.sigma.nlg.NLGUtils;
+import com.articulate.sigma.persistence.KBPersistence;
 import com.articulate.sigma.trans.SUMOKBtoTPTPKB;
 import com.articulate.sigma.trans.TPTPGenerationManager;
 import com.articulate.sigma.utils.StringUtil;
@@ -180,6 +181,11 @@ public class KBmanager implements Serializable {
     public static boolean initialized = false;
     public static boolean initializing = false;
     public static boolean debug = false;
+
+    /** When true, {@link #serialize()} is a no-op.  Set before {@link #initializeOnce()}
+     *  in tests that drive generation directly and do not want a {@code kbmanager.ser}
+     *  side-effect written to {@code $SIGMA_HOME/KBs/}. */
+    public static boolean skipSerialization = false;
 
     public enum Prover { NONE, EPROVER, VAMPIRE, LEO };
     public Prover prover = Prover.VAMPIRE;
@@ -410,6 +416,10 @@ public class KBmanager implements Serializable {
      *  save serialized version.
      */
     public static void serialize() {
+        if (skipSerialization) {
+            if (debug) System.out.println("KBmanager.serialize(): skipped (skipSerialization=true)");
+            return;
+        }
         SER_LOCK.lock();
         try {
             encoder(manager);
@@ -933,35 +943,108 @@ public class KBmanager implements Serializable {
             if (configuration == null)
                 throw new Exception("Error reading configuration file in KBmanager.initializeOnce()");
 
-            if (!KBmanager.getMgr().getPref("loadFresh").equals("true") && serializedExists() && !serializedOld(configuration)) {
-                if (debug) System.out.println("KBmanager.initializeOnce(): serialized exists and is not old");
-                loaded = loadSerialized();
-                if (loaded) {
-                    if (debug) System.out.println("KBmanager.initializeOnce(): manager is loaded");
-                    if (!prefEquals("loadLexicons","false")) {
-                        if (debug) System.out.println("KBmanager.initializeOnce(): here 1");
-                        WordNet.initOnce();
-                        if (debug) System.out.println("KBmanager.initializeOnce(): here 2");
-                        NLGUtils.init(configFileDir);
-                        if (debug) System.out.println("KBmanager.initializeOnce(): here 3");
-                        OMWordnet.readOMWfiles();
-                        if (!VerbNet.disable) {
-                            VerbNet.initOnce();
-                            VerbNet.processVerbs();
+            // M4 warm-start: try H2 database first (faster than Kryo .ser; skips all formula
+            // re-parsing and KBcache rebuild).  Only attempted when loadFresh is not forced.
+            if (!KBmanager.getMgr().getPref("loadFresh").equals("true")) {
+                try {
+                    String kbDir = KBmanager.getMgr().getPref("kbDir");
+                    List<File> kifFiles = new ArrayList<>();
+                    if (configuration != null)
+                        for (SimpleElement child : configuration.getChildElements())
+                            if ("kb".equals(child.getTagName()))
+                                for (SimpleElement constituent : child.getChildElements())
+                                    if ("constituent".equals(constituent.getTagName())) {
+                                        String path = constituent.getAttribute("filename");
+                                        if (path != null) kifFiles.add(new File(path));
+                                    }
+                    File configFile = new File(kbDir + File.separator + "config.xml");
+                    String fp = KBPersistence.computeFingerprint(configFile, kifFiles);
+                    // We need at least one KB name to check; use the first registered KB name
+                    // from configuration as a probe.
+                    String probeKbName = null;
+                    if (configuration != null)
+                        for (SimpleElement child : configuration.getChildElements())
+                            if ("kb".equals(child.getTagName())) {
+                                probeKbName = child.getAttribute("name");
+                                break;
+                            }
+                    if (probeKbName != null && KBPersistence.isUpToDate(kbDir, probeKbName, fp)) {
+                        System.out.println("KBmanager.initializeOnce(): H2 database is up to date — loading from H2");
+                        // H2 warm-start: parse KIF files to get FormulaAST objects (fast: ~0ms
+                        // per file), but skip the expensive KBcache build (~600ms) — load it
+                        // from H2 instead.  This avoids calling setConfiguration() which calls
+                        // kbsFromXML() → loadKB() → buildCaches(), performing redundant work.
+                        manager = this;
+                        KBmanager.getMgr().setPref("kbDir", kbDir);
+                        preferencesFromXML(configuration);
+                        String cwaPref = preferences.get("cwa");
+                        SUMOKBtoTPTPKB.CWA = !StringUtil.emptyString(cwaPref) && cwaPref.equals("true");
+
+                        // Create KB objects and parse KIF files (FormulaAST + caches),
+                        // but do NOT call buildCaches() — KBcache comes from H2.
+                        boolean h2warmOk = true;
+                        if (configuration != null) {
+                            for (SimpleElement child : configuration.getChildElements()) {
+                                if (!"kb".equals(child.getTagName())) continue;
+                                String kbNameH2 = child.getAttribute("name");
+                                addKB(kbNameH2);
+                                KB kbH2 = getKB(kbNameH2);
+                                if (kbH2 == null) continue;
+                                kbH2.kbCache = new KBcache(kbH2); // empty; populated from H2 below
+                                for (SimpleElement kbConst : child.getChildElements()) {
+                                    if (!"constituent".equals(kbConst.getTagName())) continue;
+                                    String path = kbConst.getAttribute("filename");
+                                    if (path == null) continue;
+                                    if (!path.startsWith(File.separator))
+                                        path = kbDir + File.separator + path;
+                                    try { kbH2.addConstituent(path); }
+                                    catch (Exception e2) {
+                                        System.err.println("KBmanager.initializeOnce(): H2 warm-start addConstituent failed for " + path + ": " + e2.getMessage());
+                                        h2warmOk = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Load KBcache + TPTP translations from H2
+                        if (h2warmOk) {
+                            for (KB kb : kbs.values()) {
+                                boolean h2ok = KBPersistence.loadKB(kbDir, kb.name, kb);
+                                if (h2ok) {
+                                    KBPersistence.loadTptp(kbDir, kb.name, kb, "fof");
+                                    KBPersistence.loadTptp(kbDir, kb.name, kb, "tff");
+                                    kb.checkArity();
+                                    System.out.println("KBmanager.initializeOnce(): H2 loaded KB: " + kb.name);
+                                } else {
+                                    System.out.println("KBmanager.initializeOnce(): H2 load failed for: " + kb.name + " — falling through to cold build");
+                                    h2warmOk = false;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (h2warmOk) {
+                            loaded = true;
+                            if (!prefEquals("loadLexicons", "false")) {
+                                WordNet.initOnce();
+                                NLGUtils.init(configFileDir);
+                                OMWordnet.readOMWfiles();
+                                if (!VerbNet.disable) { VerbNet.initOnce(); VerbNet.processVerbs(); }
+                            } else {
+                                WordNet.disable = true; VerbNet.disable = true; OMWordnet.disable = true;
+                            }
+                            initializing = false;
+                            initialized  = true;
+                            TPTPGenerationManager.startBackgroundGeneration();
                         }
                     }
-                    else {
-                        WordNet.disable = true;
-                        VerbNet.disable = true;
-                        OMWordnet.disable = true;
-                    }
-                    if (debug) System.out.println("KBmanager.initializeOnce(): kbs: " + manager.kbs.values());
-                    initializing = false;
-                    initialized = true;
-                    // Start background TPTP generation for all needed formats (FOF, TFF, THF)
-                    TPTPGenerationManager.startBackgroundGeneration();
+                } catch (Exception h2ex) {
+                    System.err.println("KBmanager.initializeOnce(): H2 warm-start failed (non-fatal): " + h2ex.getMessage());
+                    loaded = false; // ensure cold-build path runs
                 }
             }
+
+            // Kryo .ser warm-start removed — H2 (sigma_kb.mv.db) is the sole persistence layer.
             if (!loaded) { // if there was an error loading the serialized file, or there is none,
                            // then reload from sources
                 if (debug) System.out.println("Info in KBmanager.initializeOnce(): reading from sources");
@@ -975,7 +1058,23 @@ public class KBmanager implements Serializable {
                     setDefaultAttributes();
                 if (debug) System.out.println("Info in KBmanager.initializeOnce(): completed initialization");
                 if (debug) System.out.println("KBmanager.initializeOnce(): kbs: " + manager.kbs.values());
-                serialize();
+                // Persist KB state to H2 for fast warm-starts on next restart
+                try {
+                    String kbDir = KBmanager.getMgr().getPref("kbDir");
+                    List<File> kifFiles2 = new ArrayList<>();
+                    for (KB kb : kbs.values())
+                        for (String c : kb.constituents) kifFiles2.add(new File(c));
+                    File configFile2 = new File(kbDir + File.separator + "config.xml");
+                    String fp2 = KBPersistence.computeFingerprint(configFile2, kifFiles2);
+                    for (KB kb : kbs.values()) {
+                        KBPersistence.saveKB(kbDir, kb);
+                        System.out.println("KBmanager.initializeOnce(): KB state persisted to H2: " + kb.name);
+                    }
+                    if (!kbs.isEmpty())
+                        KBPersistence.saveFingerprint(kbDir, kbs.values().iterator().next().name, fp2);
+                } catch (Exception h2saveEx) {
+                    System.err.println("KBmanager.initializeOnce(): H2 save failed (non-fatal): " + h2saveEx.getMessage());
+                }
                 initializing = false;
                 initialized = true;
                 // Start background TPTP generation for all needed formats (FOF, TFF, THF)

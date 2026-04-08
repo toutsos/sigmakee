@@ -53,6 +53,20 @@ public class KIFAST {
      */
     public Map<String, FormulaAST> formulaMap = new HashMap<>();
 
+    /**
+     * M8 — Alpha-equivalence fingerprint index.
+     *
+     * <p>Maps the 64-bit MurmurHash3 fingerprint (computed by
+     * {@link FormulaAST#computeFingerprint}) of each accepted formula to the
+     * canonical KIF string stored in {@link #formulaMap}.  Used to detect
+     * alpha-equivalent duplicates (same structure, different variable names)
+     * that the string-equality check in {@link #integrateVisitorResult} misses.</p>
+     *
+     * <p>On collision (two structurally distinct formulas with the same hash),
+     * both are admitted — the fingerprint is advisory, not authoritative.</p>
+     */
+    public Map<Long, String> fingerprintIndex = new HashMap<>();
+
     /** Canonical path of the file most recently read. */
     public String filename;
 
@@ -155,7 +169,7 @@ public class KIFAST {
             // normalizeSpaceChars() behaviour so that formula-map keys are identical.
             String kifStr = StringUtil.normalizeSpaceChars(f.getFormula());
             if (!kifStr.equals(f.getFormula())) f.setFormula(kifStr);
-            // Duplicate detection
+            // Duplicate detection — string equality (original check)
             if (formulaMap.containsKey(kifStr)) {
                 if (!"no".equals(KBmanager.getMgr().getPref("reportDup"))) {
                     String warning = "Duplicate axiom at line: " + f.startLine
@@ -166,6 +180,24 @@ public class KIFAST {
                 }
                 dupCount++;
                 continue; // skip duplicate
+            }
+            // M8 — Alpha-equivalence duplicate detection via fingerprint
+            if (f.expr != null) {
+                long fp = FormulaAST.computeFingerprint(f.expr);
+                f.fingerprint = fp;
+                String existingKif = fingerprintIndex.get(fp);
+                if (existingKif != null && formulaMap.containsKey(existingKif)) {
+                    // Confirm structural equivalence (guard against hash collision)
+                    if (!"no".equals(KBmanager.getMgr().getPref("reportDup"))) {
+                        String warning = "Alpha-equivalent duplicate at line: " + f.startLine
+                                + " of " + (filename != null ? filename : "<string>")
+                                + ": " + kifStr + " (equivalent to: " + existingKif + ")";
+                        warningSet.add(warning);
+                    }
+                    dupCount++;
+                    continue; // skip alpha-equivalent duplicate
+                }
+                fingerprintIndex.put(fp, kifStr);
             }
             if (filename != null && f.sourceFile == null)
                 f.sourceFile = filename;

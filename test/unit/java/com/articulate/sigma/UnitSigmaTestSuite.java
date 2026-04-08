@@ -1,5 +1,11 @@
 package com.articulate.sigma;
 
+import com.articulate.sigma.persistence.KBPersistenceTest;
+import com.articulate.sigma.trans.RegenerateFromH2Test;
+import com.articulate.sigma.trans.ExprBasedGenerationTest;
+import com.articulate.sigma.SymbolTableTest;
+import com.articulate.sigma.KBcacheSymbolTest;
+
 import org.junit.runner.RunWith;
 import org.junit.runners.Suite;
 
@@ -25,6 +31,9 @@ import org.junit.runners.Suite;
     AffectedFormulasTest.class,
     KBcacheUnitTest.class,
     KBcacheIncrementalTest.class,
+    KBcacheParallelBuildTest.class,
+    KBcacheLazyTest.class,
+    KBPersistenceTest.class,
     KIFTest.class,
     KifFileCheckerTest.class,
     LeoExecutableConfigTest.class,
@@ -35,7 +44,11 @@ import org.junit.runners.Suite;
     RowVarTest.class,
     SessionCleanupListenerTest.class,
     TPTPPatchTest.class,
-    IncrementalTellPipelineTest.class
+    IncrementalTellPipelineTest.class,
+    RegenerateFromH2Test.class,
+    ExprBasedGenerationTest.class,
+    SymbolTableTest.class,
+    KBcacheSymbolTest.class
 })
 public class UnitSigmaTestSuite extends UnitTestBase {
 

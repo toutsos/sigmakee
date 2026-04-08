@@ -148,6 +148,14 @@ public class Formula implements Comparable, Serializable {
     /** The source file in which the formula appears. */
     public String sourceFile;
 
+    /**
+     * Non-null when this formula was asserted via KB.tell() for a specific HTTP session.
+     * Used to isolate UA formulas per-session: generation methods include a formula only
+     * if uaSessionId is null (base KB) or equals the session being generated for.
+     * Set to null on cleanup so the formula can be removed from kb.formulaMap safely.
+     */
+    public volatile String uaSessionId = null;
+
     /** The line in the file on which the formula starts. */
     public int startLine;
 

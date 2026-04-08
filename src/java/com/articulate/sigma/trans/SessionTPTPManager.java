@@ -11,6 +11,8 @@ This prevents TQ tests from overwriting the shared base TPTP files.
 package com.articulate.sigma.trans;
 
 import com.articulate.sigma.*;
+import com.articulate.sigma.parsing.*;
+import com.articulate.sigma.persistence.KBPersistence;
 import com.articulate.sigma.utils.StringUtil;
 
 import java.io.*;
@@ -313,6 +315,74 @@ public class SessionTPTPManager {
     }
 
     /*********************************************************************************
+     * Apply only the KBcache update for a schema-level formula (no TPTP patching).
+     *
+     * This is the KBcache-only half of {@link #applyIncrementalUpdate}.  Call it
+     * for each formula in a tell() batch, then call {@link #generateSessionTPTP}
+     * once at the end (instead of patching per formula).
+     *
+     * @param kb        the shared KB
+     * @param sessionId the HTTP session
+     * @param formula   the just-asserted formula
+     */
+    public static void applySessionCacheUpdateOnly(KB kb, String sessionId, Formula formula) {
+
+        if (sessionId == null || sessionId.isEmpty() || formula == null)
+            return;
+
+        String pred = formula.car();
+        if (pred == null) return;
+
+        KBcache sessionCache = getOrCreateSessionCache(sessionId, kb);
+
+        try {
+            switch (pred) {
+                case "subclass":
+                case "immediateSubclass": {
+                    String child = formula.getStringArgument(1);
+                    String parent = formula.getStringArgument(2);
+                    sessionCache.addSubclass(child, parent);
+                    break;
+                }
+                case "instance":
+                case "immediateInstance": {
+                    String inst = formula.getStringArgument(1);
+                    String className = formula.getStringArgument(2);
+                    sessionCache.addInstance(inst, className);
+                    break;
+                }
+                case "domain":
+                case "domainSubclass":
+                    sessionCache.addDomain(
+                            formula.getStringArgument(1),
+                            Integer.parseInt(formula.getStringArgument(2).trim()),
+                            formula.getStringArgument(3));
+                    break;
+                case "range":
+                case "rangeSubclass":
+                    sessionCache.addRange(
+                            formula.getStringArgument(1), formula.getStringArgument(2));
+                    break;
+                case "subrelation":
+                    sessionCache.addSubrelation(
+                            formula.getStringArgument(1), formula.getStringArgument(2));
+                    break;
+                case "disjoint":
+                    sessionCache.addDisjoint(
+                            formula.getStringArgument(1), formula.getStringArgument(2));
+                    break;
+                default:
+                    // Non-schema predicate — no KBcache update needed
+                    break;
+            }
+        }
+        catch (NumberFormatException e) {
+            System.err.println("SessionTPTPManager.applySessionCacheUpdateOnly: bad argNum in " +
+                    formula.getFormula());
+        }
+    }
+
+    /*********************************************************************************
      * Get the path to a session-specific TPTP file.
      *
      * @param sessionId The HTTP session ID
@@ -466,9 +536,9 @@ public class SessionTPTPManager {
                 kb.kbCache = sessionCache;
                 try {
                     if ("tptp".equals(lang) || "fof".equals(lang)) {
-                        TPTPGenerationManager.generateFOFToPath(kb, tmpFile);
+                        TPTPGenerationManager.generateH2FOFToPath(kb, tmpFile, sessionId);
                     } else if ("tff".equals(lang)) {
-                        TPTPGenerationManager.generateTFFToPath(kb, tmpFile);
+                        TPTPGenerationManager.generateH2TFFToPath(kb, tmpFile, sessionId);
                     } else {
                         throw new IllegalArgumentException("Unsupported TPTP language: " + lang);
                     }
@@ -969,6 +1039,33 @@ public class SessionTPTPManager {
         batchModeActive.remove(sessionId);
         precomputedRegenRequired.remove(sessionId);
 
+        // Purge UA formulas owned by this session from every KB's shared formulaMap and
+        // formulas index.  Uses KB.withUserAssertionLock() — the same lock that tell() holds
+        // — so this is safe against concurrent tell() calls on other sessions.
+        KBmanager mgr = KBmanager.getMgr();
+        if (mgr != null) {
+            for (KB kb : mgr.kbs.values()) {
+                kb.withUserAssertionLock(() -> {
+                    // Collect KIF strings to remove BEFORE touching formulaMap, so the
+                    // formulas-index cleanup can still find them.
+                    java.util.Set<String> toRemove = new java.util.HashSet<>();
+                    for (java.util.Map.Entry<String, Formula> e : kb.formulaMap.entrySet()) {
+                        if (sessionId.equals(e.getValue().uaSessionId))
+                            toRemove.add(e.getKey());
+                    }
+                    if (toRemove.isEmpty()) return null;
+                    // Remove from formulas index (HashMap — not thread-safe, protected by uaLock)
+                    for (java.util.List<String> list : kb.formulas.values())
+                        list.removeAll(toRemove);
+                    // Remove from formulaMap
+                    toRemove.forEach(kb.formulaMap::remove);
+                    System.out.println("SessionTPTPManager: Purged " + toRemove.size() +
+                            " UA formula(s) for session " + sessionId + " from KB " + kb.name);
+                    return null;
+                });
+            }
+        }
+
         Path sessionDir = getSessionDir(sessionId);
 
         if (!Files.exists(sessionDir)) {
@@ -1130,6 +1227,163 @@ public class SessionTPTPManager {
      * @param op        the operation to run with the session cache active
      * @return the value returned by {@code op}
      */
+    // -----------------------------------------------------------------------
+    // M7 — copy-on-write session regeneration from H2
+    // -----------------------------------------------------------------------
+
+    /**
+     * Regenerates the session-specific TPTP file by streaming the pre-translated
+     * base KB from H2, then translating each session assertion directly from its
+     * {@link Expr} tree (or falling back to string-based translation when no tree
+     * is available).
+     *
+     * <p>This is the M7 replacement for the pair of
+     * {@link #generateSessionTPTP}/{@link #mergeBaseWithSessionUA} + patching calls.
+     * Because H2 streaming is very fast (~ms for 75 K rows), it is safe to call
+     * this on every {@code tell()} without the complexity of incremental patching.</p>
+     *
+     * <p>If the H2 database has no base TPTP data yet (background generation still
+     * running), the method falls back silently to {@link #mergeBaseWithSessionUA}
+     * so the caller always gets a usable session file.</p>
+     *
+     * <h3>Output format</h3>
+     * <pre>
+     *   % --- Base KB (from H2) ---
+     *   tff(kb_SUMO_base_0,axiom,(...)).
+     *   ...
+     *   % --- Session assertions ---
+     *   tff(kb_SUMO_s12345_0,axiom,(...)).
+     * </pre>
+     *
+     * @param sessionId    HTTP session identifier
+     * @param kb           shared knowledge base (used for kbDir and name)
+     * @param lang         TPTP language: {@code "tff"} or {@code "tptp"} (FOF)
+     * @param sessionCache session-specific KBcache to use for sort inference in
+     *                     TFF translation; may be {@code null} (uses shared cache)
+     * @return path to the written session TPTP file, or {@code null} on failure
+     */
+    public static Path regenerateSessionFromH2(String sessionId, KB kb,
+                                               String lang, KBcache sessionCache) {
+        if (sessionId == null || sessionId.isEmpty()) return null;
+
+        Object lock = sessionLocks.computeIfAbsent(sessionId, k -> new Object());
+        synchronized (lock) {
+            Path sessionFile = getSessionTPTPPath(sessionId, kb.name, lang);
+            Path tmpFile = sessionFile.resolveSibling(sessionFile.getFileName() + ".tmp");
+
+            try {
+                Files.createDirectories(sessionFile.getParent());
+                Files.deleteIfExists(tmpFile);
+
+                String kbDir = KBmanager.getMgr().getPref("kbDir");
+                long startMs = System.currentTimeMillis();
+
+                try (PrintWriter pw = new PrintWriter(
+                        Files.newBufferedWriter(tmpFile, StandardCharsets.UTF_8))) {
+
+                    // ----------------------------------------------------------
+                    // 1. Stream base KB translations from H2
+                    // ----------------------------------------------------------
+                    pw.println("% --- Base KB (from H2) ---");
+                    int baseCount = KBPersistence.streamBaseTPTP(kbDir, kb.name, lang, pw);
+
+                    if (baseCount == 0) {
+                        // H2 has no data yet (background generation still running)
+                        // Fall back to mergeBaseWithSessionUA to avoid blocking
+                        System.out.println("SessionTPTPManager.regenerateSessionFromH2(): " +
+                                "H2 has no base TPTP data yet, falling back to merge for " + sessionId);
+                        Files.deleteIfExists(tmpFile);
+                        return mergeBaseWithSessionUA(sessionId, kb, lang);
+                    }
+
+                    // ----------------------------------------------------------
+                    // 2. Translate session-specific assertions
+                    // ----------------------------------------------------------
+                    pw.println("% --- Session assertions ---");
+                    Path uaKifPath = getSessionUAPath(sessionId, kb.name);
+                    if (Files.exists(uaKifPath)) {
+                        String sessionTag = "s" + Math.abs(sessionId.hashCode());
+                        AtomicInteger idx = new AtomicInteger(0);
+                        List<String> kifLines = Files.readAllLines(uaKifPath, StandardCharsets.UTF_8);
+                        for (String kifLine : kifLines) {
+                            if (kifLine.isBlank()) continue;
+                            String tptp = translateSessionAssertion(kifLine, lang, sessionCache != null ? sessionCache : kb.kbCache);
+                            if (tptp == null || tptp.isBlank()) continue;
+                            String axiomName = "kb_" + sanitizeKbName(kb.name)
+                                    + "_" + sessionTag + "_" + idx.getAndIncrement();
+                            pw.println(lang + "(" + axiomName + ",axiom,(" + tptp + ")).");
+                        }
+                    }
+                }
+
+                // Atomic replace
+                try {
+                    Files.move(tmpFile, sessionFile,
+                            StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException e) {
+                    Files.move(tmpFile, sessionFile, StandardCopyOption.REPLACE_EXISTING);
+                }
+
+                sessionGenerationTimestamps.put(sessionId, System.currentTimeMillis());
+                long elapsed = System.currentTimeMillis() - startMs;
+                System.out.println("SessionTPTPManager.regenerateSessionFromH2(): " +
+                        lang + " session file written in " + elapsed + "ms for " + sessionId);
+                return sessionFile;
+
+            } catch (IOException e) {
+                System.err.println("SessionTPTPManager.regenerateSessionFromH2(): " + e.getMessage());
+                try { Files.deleteIfExists(tmpFile); } catch (IOException ignore) {}
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Translates a single KIF string to a TPTP body using the Expr-based path
+     * when available, with fallback to the string-based pipeline.
+     *
+     * @param kifLine      raw KIF formula string (e.g. {@code "(instance Fido Dog)"})
+     * @param lang         {@code "tff"} or {@code "tptp"} / {@code "fof"}
+     * @param cache        KBcache to use for sort inference (may be shared cache)
+     * @return TPTP formula body, or {@code null} if translation fails
+     */
+    static String translateSessionAssertion(String kifLine, String lang, KBcache cache) {
+        if (kifLine == null || kifLine.isBlank()) return null;
+        // Try Expr-based translation first (fast path)
+        try {
+            SuokifVisitor visitor = SuokifVisitor.parseSentence(kifLine);
+            if (visitor != null && visitor.result != null && !visitor.result.isEmpty()) {
+                FormulaAST ast = visitor.result.get(0);
+                if (ast != null && ast.expr != null) {
+                    if ("tff".equals(lang)) {
+                        return ExprToTFF.translate(ast.expr, false, null);
+                    } else {
+                        return ExprToTPTP.translateKifString(kifLine, false, "fof");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // fall through to string-based path
+        }
+        // String-based fallback
+        try {
+            if ("tff".equals(lang)) {
+                return SUMOtoTFAform.process(kifLine, false);
+            } else {
+                return SUMOformulaToTPTPformula.tptpParseSUOKIFString(kifLine, false);
+            }
+        } catch (Exception e) {
+            System.err.println("SessionTPTPManager.translateSessionAssertion(): failed for: " + kifLine);
+            return null;
+        }
+    }
+
+    /** Sanitize a KB name for use in TPTP axiom names. */
+    private static String sanitizeKbName(String kbName) {
+        return kbName.replaceAll("[^A-Za-z0-9]", "_");
+    }
+
     public static <T> T withSessionCache(String sessionId, KB kb, Supplier<T> op) {
 
         if (sessionId == null || sessionId.isEmpty()) return op.get();

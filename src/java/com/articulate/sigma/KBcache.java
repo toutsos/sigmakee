@@ -39,6 +39,7 @@ import com.google.common.collect.Sets;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
@@ -152,6 +153,26 @@ public class KBcache implements Serializable {
     private static final float LOAD_FACTOR = 0.75f;
 
     public static HashMap<String,Integer> logOpValences = new HashMap<>();
+
+    // -----------------------------------------------------------------------
+    // M3 — Lazy Semantic Cache
+    //
+    // These caches are populated on first access via getParentsLazy(),
+    // getChildrenLazy(), and getInstanceOfLazy().  They exist ALONGSIDE the
+    // eager maps (parents/children/instanceOf) and must not replace them —
+    // existing callers are unaffected.
+    //
+    // Key format for parent/child caches: rel + "##" + term
+    // -----------------------------------------------------------------------
+
+    /** Lazy transitive-parent cache.  Key: rel + "##" + term. */
+    private final ConcurrentHashMap<String, Set<String>> lazyParentsCache  = new ConcurrentHashMap<>();
+
+    /** Lazy transitive-child cache.  Key: rel + "##" + term. */
+    private final ConcurrentHashMap<String, Set<String>> lazyChildrenCache = new ConcurrentHashMap<>();
+
+    /** Lazy instanceOf cache.  Key: term. */
+    private final ConcurrentHashMap<String, Set<String>> lazyInstanceOfCache = new ConcurrentHashMap<>();
 
 
     /****************************************************************
@@ -375,6 +396,284 @@ public class KBcache implements Serializable {
         signatures.clear();
         transRels.clear();
         valences.clear();
+    }
+
+    // -----------------------------------------------------------------------
+    // M3 — Lazy accessor methods
+    //
+    // These provide the same information as the eager parents/children/instanceOf
+    // maps but compute only the requested (term, rel) pair on first access,
+    // then cache the result.  They are safe to call concurrently.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Returns the transitive closure of parents of {@code term} under {@code rel},
+     * computing and caching on first access.
+     *
+     * <p>Produces the same result as {@code parents.get(rel).get(term)} from the
+     * eager build, but without requiring the full KB to be traversed upfront.</p>
+     */
+    public Set<String> getParentsLazy(String term, String rel) {
+
+        if (StringUtil.emptyString(term) || StringUtil.emptyString(rel))
+            return Collections.emptySet();
+        return lazyParentsCache.computeIfAbsent(rel + "##" + term,
+                k -> computeTransitiveClosureUp(term, rel));
+    }
+
+    /**
+     * Returns the transitive closure of children of {@code term} under {@code rel},
+     * computing and caching on first access.
+     *
+     * <p>Produces the same result as {@code children.get(rel).get(term)} from the
+     * eager build.</p>
+     */
+    public Set<String> getChildrenLazy(String term, String rel) {
+
+        if (StringUtil.emptyString(term) || StringUtil.emptyString(rel))
+            return Collections.emptySet();
+        return lazyChildrenCache.computeIfAbsent(rel + "##" + term,
+                k -> computeTransitiveClosureDown(term, rel));
+    }
+
+    /**
+     * Returns the set of classes that {@code term} is an (transitive) instance of,
+     * computing and caching on first access.
+     *
+     * <p>Produces the same result as {@code instanceOf.get(term)} from the eager
+     * build (direct instance classes + their transitive subclass ancestors).</p>
+     */
+    public Set<String> getInstanceOfLazy(String term) {
+
+        if (StringUtil.emptyString(term))
+            return Collections.emptySet();
+        return lazyInstanceOfCache.computeIfAbsent(term, this::computeInstanceOf);
+    }
+
+    /**
+     * BFS upward through {@code rel}: starting at {@code startTerm}, follow
+     * (rel startTerm ?parent) links transitively.
+     * Returns an unmodifiable set of all ancestors (not including startTerm itself).
+     */
+    private Set<String> computeTransitiveClosureUp(String startTerm, String rel) {
+
+        Set<String> result  = new HashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        Set<String> visited = new HashSet<>();
+        queue.add(startTerm);
+        visited.add(startTerm);
+        while (!queue.isEmpty()) {
+            String current = queue.remove();
+            List<Formula> forms = kb.askWithRestriction(0, rel, 1, current);
+            if (forms == null) continue;
+            for (Formula f : forms) {
+                if (f.isCached()) continue;
+                String parent = f.getStringArgument(2);
+                if (!StringUtil.emptyString(parent) && visited.add(parent)) {
+                    result.add(parent);
+                    queue.add(parent);
+                }
+            }
+        }
+        return Collections.unmodifiableSet(result);
+    }
+
+    /**
+     * BFS downward through {@code rel}: starting at {@code startTerm}, follow
+     * (rel ?child startTerm) links transitively.
+     * Returns an unmodifiable set of all descendants (not including startTerm itself).
+     */
+    private Set<String> computeTransitiveClosureDown(String startTerm, String rel) {
+
+        Set<String> result  = new HashSet<>();
+        Deque<String> queue = new ArrayDeque<>();
+        Set<String> visited = new HashSet<>();
+        queue.add(startTerm);
+        visited.add(startTerm);
+        while (!queue.isEmpty()) {
+            String current = queue.remove();
+            List<Formula> forms = kb.askWithRestriction(0, rel, 2, current);
+            if (forms == null) continue;
+            for (Formula f : forms) {
+                if (f.isCached()) continue;
+                String child = f.getStringArgument(1);
+                if (!StringUtil.emptyString(child) && visited.add(child)) {
+                    result.add(child);
+                    queue.add(child);
+                }
+            }
+        }
+        return Collections.unmodifiableSet(result);
+    }
+
+    /**
+     * Computes the classes {@code term} is an instance of, including transitive
+     * subclass parents of each direct class.
+     * Returns an unmodifiable set.
+     */
+    private Set<String> computeInstanceOf(String term) {
+
+        Set<String> result = new HashSet<>();
+        List<Formula> forms = kb.askWithRestriction(0, "instance", 1, term);
+        if (forms == null) return Collections.emptySet();
+        for (Formula f : forms) {
+            if (f.isCached()) continue;
+            String cls = f.getStringArgument(2);
+            if (!StringUtil.emptyString(cls)) {
+                result.add(cls);
+                result.addAll(getParentsLazy(cls, "subclass"));
+            }
+        }
+        return Collections.unmodifiableSet(result);
+    }
+
+    // -----------------------------------------------------------------------
+    // M5 — Symbol-indexed taxonomy
+    //
+    // Mirrors the string-keyed parents/children maps using integer symbol IDs
+    // (via SymbolTable) to reduce per-lookup String hashing overhead.  Built
+    // once after buildCaches() completes by calling buildSymbolTaxonomy().
+    // Accessors getParentsSymbol / getChildrenSymbol produce the same results
+    // as parents.get(rel).get(term) / children.get(rel).get(term) but via the
+    // int-indexed path.
+    // -----------------------------------------------------------------------
+
+    /** Shared symbol table: KB term strings → compact int IDs. */
+    private SymbolTable symbols = null;
+
+    /**
+     * Symbol-indexed parent map.
+     * Key = relation string; value = (termId → set of parentIds).
+     */
+    private Map<String, Map<Integer, Set<Integer>>> parentsBySymbol = null;
+
+    /**
+     * Symbol-indexed child map.
+     * Key = relation string; value = (termId → set of childIds).
+     */
+    private Map<String, Map<Integer, Set<Integer>>> childrenBySymbol = null;
+
+    /**
+     * Builds the symbol-indexed taxonomy from the already-populated string maps
+     * {@link #parents} and {@link #children}.  Safe to call multiple times
+     * (subsequent calls rebuild from scratch).
+     *
+     * <p>Call this after {@link #buildCaches()} to enable the fast
+     * {@link #getParentsSymbol} / {@link #getChildrenSymbol} accessors.</p>
+     */
+    public void buildSymbolTaxonomy() {
+        // Count distinct terms to size the SymbolTable
+        Set<String> allTerms = new HashSet<>();
+        for (Map.Entry<String, Map<String, Set<String>>> relEntry : parents.entrySet()) {
+            for (Map.Entry<String, Set<String>> termEntry : relEntry.getValue().entrySet()) {
+                allTerms.add(termEntry.getKey());
+                allTerms.addAll(termEntry.getValue());
+            }
+        }
+        for (Map.Entry<String, Map<String, Set<String>>> relEntry : children.entrySet()) {
+            for (Map.Entry<String, Set<String>> termEntry : relEntry.getValue().entrySet()) {
+                allTerms.add(termEntry.getKey());
+                allTerms.addAll(termEntry.getValue());
+            }
+        }
+
+        SymbolTable st = new SymbolTable(allTerms.size());
+        for (String t : allTerms) st.intern(t);
+
+        Map<String, Map<Integer, Set<Integer>>> pSym = new HashMap<>(parents.size());
+        for (Map.Entry<String, Map<String, Set<String>>> relEntry : parents.entrySet()) {
+            String rel = relEntry.getKey();
+            Map<Integer, Set<Integer>> inner = new HashMap<>(relEntry.getValue().size());
+            for (Map.Entry<String, Set<String>> termEntry : relEntry.getValue().entrySet()) {
+                int termId = st.intern(termEntry.getKey());
+                Set<Integer> parentIds = new HashSet<>(termEntry.getValue().size());
+                for (String p : termEntry.getValue()) parentIds.add(st.intern(p));
+                inner.put(termId, Collections.unmodifiableSet(parentIds));
+            }
+            pSym.put(rel, inner);
+        }
+
+        Map<String, Map<Integer, Set<Integer>>> cSym = new HashMap<>(children.size());
+        for (Map.Entry<String, Map<String, Set<String>>> relEntry : children.entrySet()) {
+            String rel = relEntry.getKey();
+            Map<Integer, Set<Integer>> inner = new HashMap<>(relEntry.getValue().size());
+            for (Map.Entry<String, Set<String>> termEntry : relEntry.getValue().entrySet()) {
+                int termId = st.intern(termEntry.getKey());
+                Set<Integer> childIds = new HashSet<>(termEntry.getValue().size());
+                for (String c : termEntry.getValue()) childIds.add(st.intern(c));
+                inner.put(termId, Collections.unmodifiableSet(childIds));
+            }
+            cSym.put(rel, inner);
+        }
+
+        this.symbols         = st;
+        this.parentsBySymbol = Collections.unmodifiableMap(pSym);
+        this.childrenBySymbol = Collections.unmodifiableMap(cSym);
+    }
+
+    /**
+     * Returns the set of transitive parents of {@code term} under {@code rel}
+     * using the symbol-indexed path built by {@link #buildSymbolTaxonomy}.
+     *
+     * <p>Falls back to the string map if the symbol taxonomy has not been built.</p>
+     *
+     * @param term the KB term to look up
+     * @param rel  the relation (e.g. {@code "subclass"})
+     * @return unmodifiable set of parent names; empty if none or unknown
+     */
+    public Set<String> getParentsSymbol(String term, String rel) {
+        if (parentsBySymbol == null || symbols == null) {
+            // Fall back to string map
+            Map<String, Set<String>> relMap = parents.get(rel);
+            if (relMap == null) return Collections.emptySet();
+            Set<String> result = relMap.get(term);
+            return result != null ? result : Collections.emptySet();
+        }
+        int termId = symbols.lookup(term);
+        if (termId == -1) return Collections.emptySet();
+        Map<Integer, Set<Integer>> relMap = parentsBySymbol.get(rel);
+        if (relMap == null) return Collections.emptySet();
+        Set<Integer> parentIds = relMap.get(termId);
+        if (parentIds == null) return Collections.emptySet();
+        Set<String> result = new HashSet<>(parentIds.size());
+        for (int pid : parentIds) result.add(symbols.getName(pid));
+        return Collections.unmodifiableSet(result);
+    }
+
+    /**
+     * Returns the set of transitive children of {@code term} under {@code rel}
+     * using the symbol-indexed path built by {@link #buildSymbolTaxonomy}.
+     *
+     * <p>Falls back to the string map if the symbol taxonomy has not been built.</p>
+     *
+     * @param term the KB term to look up
+     * @param rel  the relation (e.g. {@code "subclass"})
+     * @return unmodifiable set of child names; empty if none or unknown
+     */
+    public Set<String> getChildrenSymbol(String term, String rel) {
+        if (childrenBySymbol == null || symbols == null) {
+            Map<String, Set<String>> relMap = children.get(rel);
+            if (relMap == null) return Collections.emptySet();
+            Set<String> result = relMap.get(term);
+            return result != null ? result : Collections.emptySet();
+        }
+        int termId = symbols.lookup(term);
+        if (termId == -1) return Collections.emptySet();
+        Map<Integer, Set<Integer>> relMap = childrenBySymbol.get(rel);
+        if (relMap == null) return Collections.emptySet();
+        Set<Integer> childIds = relMap.get(termId);
+        if (childIds == null) return Collections.emptySet();
+        Set<String> result = new HashSet<>(childIds.size());
+        for (int cid : childIds) result.add(symbols.getName(cid));
+        return Collections.unmodifiableSet(result);
+    }
+
+    /**
+     * Returns the {@link SymbolTable} built by {@link #buildSymbolTaxonomy},
+     * or {@code null} if the symbol taxonomy has not been built yet.
+     */
+    public SymbolTable getSymbolTable() {
+        return symbols;
     }
 
     // -----------------------------------------------------------------------
@@ -2175,10 +2474,101 @@ public class KBcache implements Serializable {
     public void buildCaches() {
 
         clearCaches(); // ensure a clean slate
-//        if (!SUMOKBtoTPTPKB.rapidParsing)
-            _buildCaches();
-//        else
-//            _t_buildCaches();
+        _p_buildCaches();
+    }
+
+    /** ***************************************************************
+     * Parallel build using CompletableFuture with a proper dependency graph.
+     *
+     * Wave 1 (independent, parallel):
+     *   buildInsts, buildRelationsSet, buildTransitiveRelationsSet, buildDirectParentTerms
+     *
+     * Wave 2 (after Wave 1, parallel with each other):
+     *   buildParents (needs transRels), buildChildren (needs transRels)
+     *
+     * Wave 3 (after Wave 2, parallel subset):
+     *   collectDomains (needs relations+parents), buildDirectInstances (needs parents)
+     *
+     * Wave 4 (sequential, after Wave 3):
+     *   buildInstTransRels → addTransitiveInstances → buildTransInstOf + correctValences
+     *   → buildFunctionsSet → [disjoint group] → storeCacheAsFormulas
+     */
+    private void _p_buildCaches() {
+
+        long startMillis = System.currentTimeMillis();
+        if (debug) System.out.println("INFO in KBcache._p_buildCaches(): begin");
+
+        // Pre-warm Formula.stringArgs on all formulas before parallel access.
+        // Formula.getStringArgument() lazily initialises a non-thread-safe ArrayList
+        // via loadArguments(); calling it now (single-threaded) ensures every formula
+        // is fully parsed before Wave 1 threads read argument positions concurrently.
+        for (Formula f : kb.formulaMap.values())
+            f.getStringArgument(0); // triggers loadArguments() if not yet done
+
+        // --- Wave 1: four fully-independent methods, no shared writes ---
+        CompletableFuture<Void> f1a = CompletableFuture.runAsync(this::buildInsts,                KButilities.EXECUTOR_SERVICE);
+        CompletableFuture<Void> f1b = CompletableFuture.runAsync(this::buildRelationsSet,         KButilities.EXECUTOR_SERVICE);
+        CompletableFuture<Void> f1c = CompletableFuture.runAsync(this::buildTransitiveRelationsSet, KButilities.EXECUTOR_SERVICE);
+        CompletableFuture<Void> f1d = CompletableFuture.runAsync(this::buildDirectParentTerms,    KButilities.EXECUTOR_SERVICE);
+        CompletableFuture<Void> wave1 = CompletableFuture.allOf(f1a, f1b, f1c, f1d);
+        wave1.join();
+        System.out.printf("KBcache._p_buildCaches(): Wave 1 done: %d ms%n", System.currentTimeMillis() - startMillis);
+
+        // --- Wave 2: buildParents and buildChildren both need transRels; write to different maps ---
+        long w2 = System.currentTimeMillis();
+        CompletableFuture<Void> f2a = CompletableFuture.runAsync(this::buildParents,  KButilities.EXECUTOR_SERVICE);
+        CompletableFuture<Void> f2b = CompletableFuture.runAsync(this::buildChildren, KButilities.EXECUTOR_SERVICE);
+        CompletableFuture.allOf(f2a, f2b).join();
+        System.out.printf("KBcache._p_buildCaches(): Wave 2 (parents+children) done: %d ms%n", System.currentTimeMillis() - w2);
+
+        // --- Wave 3: collectDomains and buildDirectInstances write to different fields ---
+        long w3 = System.currentTimeMillis();
+        CompletableFuture<Void> f3a = CompletableFuture.runAsync(this::collectDomains,        KButilities.EXECUTOR_SERVICE);
+        CompletableFuture<Void> f3b = CompletableFuture.runAsync(this::buildDirectInstances,  KButilities.EXECUTOR_SERVICE);
+        CompletableFuture.allOf(f3a, f3b).join();
+        System.out.printf("KBcache._p_buildCaches(): Wave 3 (domains+directInstances) done: %d ms%n", System.currentTimeMillis() - w3);
+
+        // --- Wave 4: sequential — each step depends on the previous ---
+        long w4 = System.currentTimeMillis();
+        buildInstTransRels();
+        System.out.printf("KBcache._p_buildCaches(): buildInstTransRels:    %d ms%n", System.currentTimeMillis() - w4);
+        w4 = System.currentTimeMillis();
+        addTransitiveInstances();
+        System.out.printf("KBcache._p_buildCaches(): addTransitiveInstances: %d ms%n", System.currentTimeMillis() - w4);
+        w4 = System.currentTimeMillis();
+        buildTransInstOf();
+        correctValences();
+        System.out.printf("KBcache._p_buildCaches(): buildTransInstOf:       %d ms%n", System.currentTimeMillis() - w4);
+        w4 = System.currentTimeMillis();
+        buildFunctionsSet();
+        System.out.printf("KBcache._p_buildCaches(): buildFunctionsSet:      %d ms%n", System.currentTimeMillis() - w4);
+
+        // --- Wave 5: optional disjoint maps, then final store ---
+        if (KBmanager.getMgr().getPref("cacheDisjoint").equals("true")) {
+            long wd = System.currentTimeMillis();
+            buildExplicitDisjointMap();
+            System.out.printf("KBcache._p_buildCaches(): buildExplicitDisjointMap: %d ms%n", System.currentTimeMillis() - wd);
+            wd = System.currentTimeMillis();
+            buildDisjointRelationsMap();
+            System.out.printf("KBcache._p_buildCaches(): buildDisjointRelationsMap: %d ms%n", System.currentTimeMillis() - wd);
+            wd = System.currentTimeMillis();
+            buildDisjointMap();
+            System.out.printf("KBcache._p_buildCaches(): buildDisjointMap:         %d ms%n", System.currentTimeMillis() - wd);
+        }
+        long ws = System.currentTimeMillis();
+        storeCacheAsFormulas();
+        System.out.printf("KBcache._p_buildCaches(): storeCacheAsFormulas:  %d ms%n", System.currentTimeMillis() - ws);
+
+        System.out.printf("INFO in KBcache._p_buildCaches(): size: %d%n", instanceOf.keySet().size());
+
+        // Build int-indexed symbol taxonomy (M5) so getParentsSymbol/getChildrenSymbol
+        // use integer comparisons instead of String hashing on hot query paths.
+        long wsym = System.currentTimeMillis();
+        buildSymbolTaxonomy();
+        System.out.printf("KBcache._p_buildCaches(): buildSymbolTaxonomy:   %d ms%n", System.currentTimeMillis() - wsym);
+
+        System.out.printf("KBcache._p_buildCaches():                        %d total ms%n", System.currentTimeMillis() - startMillis);
+        initialized = true;
     }
 
     /** ***************************************************************
