@@ -12,9 +12,11 @@
     http://github.com/ontologyportal
 */
 
- term = request.getParameter("term");
+  term = ValidationUtils.sanitizeSumoTerm(request.getParameter("term"));
 
-  String POS = request.getParameter("POS");
+  String word = ValidationUtils.sanitizeSumoTerm(request.getParameter("word"));
+
+  String POS = ValidationUtils.sanitizeString(request.getParameter("POS"), "0");
   if (POS == null)
       POS = "0";
 %>
@@ -34,7 +36,7 @@
           </td>
           <td align="left" valign="top">
               <input type="submit" value="Show">
-              <img src="pixmaps/1pixel.gif" width="10"><a href="Intersect.jsp?kb=<%=kbName %>&lang=<%=language %>&flang=<%=flang %>&term1=<%=term %>">Term intersection</a>              
+              <img src="pixmaps/1pixel.gif" width="10"><a href="Intersect.jsp?kb=<%=kbName %>&lang=<%=language %>&flang=<%=flang %>&term1=<%=java.net.URLEncoder.encode(term, "UTF-8") %>">Term intersection</a>              
           </td>
          <br> 
       </tr>
@@ -52,7 +54,7 @@
         <input type="hidden" name="lang" value=<%=language%>>
         <input type="hidden" name="flang" value=<%=flang%>>      
       <td align="left" valign="top">
-          <input type="text" size="27" name="word">
+          <input type="text" size="27" name="word" value="<%= word %>">
           <img src="pixmaps/1pixel.gif" width="3"></td>
       <td align="left" valign="top">
           <select name="POS">

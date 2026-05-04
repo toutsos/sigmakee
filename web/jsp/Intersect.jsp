@@ -20,12 +20,8 @@
     http://github.com/ontologyportal
 */
 
-  String term1 = request.getParameter("term1");
-  if (term1 == null || term1.equals("null"))
-  	term1 = "Object";
-  String term2 = request.getParameter("term2");
-  if (term2 == null || term2.equals("null"))
-  	term2 = "subclass";
+  String term1 = ValidationUtils.sanitizeSumoTerm(request.getParameter("term1"), "Object");
+  String term2 = ValidationUtils.sanitizeSumoTerm(request.getParameter("term2"), "subclass");
   List<Formula> forms = KButilities.termIntersection(kb,term1,term2);
 %>
 

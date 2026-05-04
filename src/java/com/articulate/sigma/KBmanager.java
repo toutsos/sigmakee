@@ -105,7 +105,8 @@ public class KBmanager implements Serializable {
                     "smtpEmailUser",
                     "smtpEmailPassword",
                     "smtpEmailServer",
-                    "aws"
+                    "aws",
+                    "useAntlrParser"
             );
 
     /** Master file key cache for the config */
@@ -130,6 +131,43 @@ public class KBmanager implements Serializable {
 
     private static final java.util.concurrent.locks.ReentrantLock SER_LOCK =
             new java.util.concurrent.locks.ReentrantLock();
+
+    /** Build version loaded from version.properties packaged in the WAR/JAR. */
+    public static final String BUILD_VERSION = loadBuildVersion();
+
+    /** Raw commit SHA loaded from version.properties (e.g. "ab25e6c"), or "dev". */
+    public static final String BUILD_COMMIT = loadBuildProperty("build.commit", "dev");
+
+    /** Build date loaded from version.properties. */
+    public static final String BUILD_DATE = loadBuildProperty("build.date", "");
+
+    private static String loadBuildVersion() {
+        return loadBuildProperty("build.version", "dev");
+    }
+
+    private static String loadBuildProperty(String key, String fallback) {
+        try (InputStream is = KBmanager.class.getResourceAsStream("/version.properties")) {
+            if (is == null) return fallback;
+            Properties p = new Properties();
+            p.load(is);
+            return p.getProperty(key, fallback);
+        }
+        catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    public static String getBuildVersion() {
+        return BUILD_VERSION;
+    }
+
+    public static String getBuildCommit() {
+        return BUILD_COMMIT;
+    }
+
+    public static String getBuildDate() {
+        return BUILD_DATE;
+    }
 
     protected static final String CONFIG_FILE = "config.xml";
     protected static final String KB_MANAGER_SER = "kbmanager.ser";
@@ -920,6 +958,14 @@ public class KBmanager implements Serializable {
                     if (debug) System.out.println("KBmanager.initializeOnce(): kbs: " + manager.kbs.values());
                     initializing = false;
                     initialized = true;
+                    // Rebuild transient symbol taxonomies in background (warm start: skipped buildCaches())
+                    for (KB kb : manager.kbs.values()) {
+                        final KB kbFinal = kb;
+                        KButilities.EXECUTOR_SERVICE.submit(() -> {
+                            try { kbFinal.kbCache.buildSymbolTaxonomy(); }
+                            catch (Exception e) { System.err.println("KBmanager: buildSymbolTaxonomy failed: " + e.getMessage()); }
+                        });
+                    }
                     // Start background TPTP generation for all needed formats (FOF, TFF, THF)
                     TPTPGenerationManager.startBackgroundGeneration();
                 }

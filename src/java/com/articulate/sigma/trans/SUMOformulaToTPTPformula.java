@@ -19,7 +19,10 @@ public class SUMOformulaToTPTPformula {
     private static final ThreadLocal<StringBuilder> qlistTL = ThreadLocal.withInitial(StringBuilder::new);
 
     public static boolean getHideNumbers() { return hideNumbersTL.get(); }
-    public static void setHideNumbers(boolean h) { hideNumbersTL.set(h); }
+    public static void setHideNumbers(boolean h) {
+        hideNumbersTL.set(h);
+        //System.out.println("setting hideNumbers to: " +  h);
+    }
     public static String getLang() { return langTL.get(); }
     public static void setLang(String l) { langTL.set(l); }
     public static StringBuilder getQlist() { return qlistTL.get(); }
@@ -72,6 +75,9 @@ public class SUMOformulaToTPTPformula {
             if (debug) System.out.println("SUMOformulaToTPTPformula.translateWord(): result: " + result);
             if (result.equals("$true" + Formula.TERM_MENTION_SUFFIX) || result.equals("$false" + Formula.TERM_MENTION_SUFFIX))
                 result = "'" + result + "'";
+            //System.out.println("SUMOformulaToTPTPformula.translateWord(): getHideNumbers(): " + getHideNumbers());
+            //System.out.println("SUMOformulaToTPTPformula.translateWord(): result: " + result);
+
             if (StringUtil.isNumeric(result) && getHideNumbers() && !"tff".equals(lang)) {
                 if (result.contains("."))
                     result = result.replace('.','_');
@@ -160,10 +166,12 @@ public class SUMOformulaToTPTPformula {
         if (ch0 == '?' || ch0 == '@')
             return(Formula.TERM_VARIABLE_PREFIX + st.substring(1).replace('-','_'));
         if (debug) System.out.println("INFO in SUMOformulaToTPTPformula.translateWord_1(): here2: ");
+        //----Inequality predicates used as terms need __m in all languages to avoid
+        // the predicate/term symbol clash that TPTP parsers reject as a type error.
+        if (Formula.isInequality(st) && !hasArguments)
+            return Formula.TERM_SYMBOL_PREFIX + st + Formula.TERM_MENTION_SUFFIX;
         //----Translate special predicates
         if ("tff".equals(lang)) {
-            if (Formula.isInequality(st) && !hasArguments)
-                return Formula.TERM_SYMBOL_PREFIX + st + Formula.TERM_MENTION_SUFFIX;
             translateIndex = kifPredicates.indexOf(st);
             if (translateIndex != -1)
                 return (tptpPredicates.get(translateIndex) + (hasArguments ? "" : mentionSuffix));
@@ -187,10 +195,9 @@ public class SUMOformulaToTPTPformula {
             return (tptpOps.get(translateIndex));
         }
         if (debug) System.out.println("INFO in SUMOformulaToTPTPformula.translateWord_1(): here6: ");
-        //----Do nothing to numbers
-        if (type == StreamTokenizer.TT_NUMBER ||
-            (st != null && (Character.isDigit(ch0) ||
-                                 (ch0 == '-' && Character.isDigit(ch1))))) {
+        //----Do nothing to pure numeric literals; mixed digit+letter tokens (e.g. 5GNetwork)
+        // must fall through so they receive the s__ prefix and become valid TPTP functors.
+        if (type == StreamTokenizer.TT_NUMBER || StringUtil.isNumeric(st)) {
             return(st);
         }
         String term = st;
@@ -205,7 +212,7 @@ public class SUMOformulaToTPTPformula {
                 }
             }
             else {
-                return (Formula.TERM_SYMBOL_PREFIX + st.substring(1).replace('-','_'));
+                return (Formula.TERM_SYMBOL_PREFIX + st.replace('-','_'));
             }
 
         }

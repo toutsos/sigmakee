@@ -14,9 +14,7 @@
     http://github.com/ontologyportal
 */
 
-  String word = request.getParameter("word");
-  if (!word.isEmpty())
-      word = StringUtil.replaceNonIdChars(StringUtil.removeHTML(word));
+  String word = ValidationUtils.sanitizeString(request.getParameter("word"));
   String writeProlog = request.getParameter("writeProlog");
   String synset = request.getParameter("synset");
   String POS = request.getParameter("POS");
@@ -48,7 +46,7 @@
 
 <form action="WordNet.jsp" method="GET">
   <font face="Arial,helvetica"><b>English Word:&nbsp;</b></font>
-  <input type="text" name="word" VALUE=<%= "\"" + (request.getParameter("word")==null?"":request.getParameter("word")) + "\"" %>>
+  <input type="text" name="word" VALUE="<%= word %>">
     <select name="POS">
       <option <%= POS.equals("0")?"selected":"" %> value="0">Any
       <option <%= POS.equals("1")?"selected":"" %> value="1">Noun
